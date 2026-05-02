@@ -32,6 +32,7 @@ let _searchVisible = false;
 let _searchQuery = '';
 let _searchDebounceTimer = null;
 let _activeGroupFilter = null; 
+let _rlShowAllCards = false; // 点击“显示剩余”后保持展开，删除字卡不会跳回只显示前80条
 
 const GROUP_COLORS = [
     '#FF6B6B','#FF8E53','#FFC542','#51CF66',
@@ -205,6 +206,7 @@ function renderReplyLibrary() {
         subTabsContainer.querySelectorAll('.reply-tab-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 currentSubTab = btn.dataset.id;
+                _rlShowAllCards = false;
                 _batchModeActive = false;
                 _batchSelectedIndices.clear();
                 _activeGroupFilter = null;
@@ -690,7 +692,7 @@ const _CARD_PAGE_SIZE = 80; // 每次最多渲染 80 张，超过时追加"显�
 
 function _renderCardList(container, itemsWithIdx, disabledSet) {
     const total = itemsWithIdx.length;
-    const toRender = itemsWithIdx.slice(0, _CARD_PAGE_SIZE);
+    const toRender = _rlShowAllCards ? itemsWithIdx : itemsWithIdx.slice(0, _CARD_PAGE_SIZE);
     const remaining = total - toRender.length;
 
     const frag = document.createDocumentFragment();
@@ -703,6 +705,7 @@ function _renderCardList(container, itemsWithIdx, disabledSet) {
         btn.style.cssText = 'width:100%;padding:10px;margin-top:4px;border:1.5px dashed var(--border-color);border-radius:12px;background:transparent;color:var(--text-secondary);font-size:12px;cursor:pointer;font-family:var(--font-family);';
         btn.textContent = `显示剩余 ${remaining} 条`;
         btn.onclick = () => {
+            _rlShowAllCards = true;
             btn.remove();
             const moreFrag = document.createDocumentFragment();
             itemsWithIdx.slice(_CARD_PAGE_SIZE).forEach(({ text, idx }) => {
@@ -719,6 +722,7 @@ function _renderCardList(container, itemsWithIdx, disabledSet) {
 function _createCard(item, index, disabledSet) {
     const div = document.createElement('div');
     div.className = 'rl-card';
+    div.dataset.rlIndex = index;
     const isDisabled = disabledSet && disabledSet.has(item);
     const isSelected = _batchSelectedIndices.has(index);
 
@@ -809,6 +813,7 @@ function _renderAtmosphereList(list, items) {
         const realIdx = (indexMaps[currentSubTab] || { get: () => idx }).get(item) ?? idx;
         const div = document.createElement('div');
         div.className = 'custom-reply-item';
+        div.dataset.rlIndex = realIdx;
         div.innerHTML = `
             <span class="custom-reply-text">${item.replace('|','<br><small style="opacity:.65">')}</span>
             <div class="custom-reply-actions">
@@ -1355,8 +1360,59 @@ function _showBatchGroupPicker() {
     };
 }
 
+
+function _rlGetScrollTargets() {
+    const list = document.getElementById('custom-replies-list');
+    const targets = [];
+    if (list) targets.push(list);
+    let el = list ? list.parentElement : null;
+    while (el && el !== document.body) {
+        const st = getComputedStyle(el);
+        const canScroll = /(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 2;
+        if (canScroll) targets.push(el);
+        el = el.parentElement;
+    }
+    targets.push(document.scrollingElement || document.documentElement);
+    return Array.from(new Set(targets)).filter(Boolean);
+}
+
+function _rlCaptureScrollState(anchorIndex) {
+    const targets = _rlGetScrollTargets();
+    const anchor = document.querySelector(`.rl-card[data-rl-index="${anchorIndex}"], .custom-reply-item[data-rl-index="${anchorIndex}"]`);
+    const root = document.getElementById('custom-replies-list');
+    return {
+        scrolls: targets.map(el => ({ el, top: el.scrollTop, left: el.scrollLeft })),
+        anchorIndex,
+        anchorOffset: anchor && root ? (anchor.getBoundingClientRect().top - root.getBoundingClientRect().top) : null
+    };
+}
+
+function _rlRestoreScrollState(state) {
+    if (!state) return;
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            const root = document.getElementById('custom-replies-list');
+            const anchor = document.querySelector(`.rl-card[data-rl-index="${state.anchorIndex}"], .custom-reply-item[data-rl-index="${state.anchorIndex}"]`);
+            if (anchor && root && state.anchorOffset !== null) {
+                const diff = (anchor.getBoundingClientRect().top - root.getBoundingClientRect().top) - state.anchorOffset;
+                _rlGetScrollTargets().forEach(el => {
+                    if (el.scrollHeight > el.clientHeight + 2) el.scrollTop += diff;
+                });
+            } else if (state.scrolls) {
+                state.scrolls.forEach(s => {
+                    try {
+                        s.el.scrollTop = s.top;
+                        s.el.scrollLeft = s.left;
+                    } catch(e) {}
+                });
+            }
+        });
+    });
+}
+
 function deleteItem(index) {
     if (!confirm('确定删除吗？')) return;
+    const scrollState = _rlCaptureScrollState(index);
     const ctx = _getGroupCtx();
     const item = _tabHasGroups() ? ctx.items[index] : null;
     if (currentMajorTab === 'reply' && currentSubTab === 'custom') customReplies.splice(index, 1);
@@ -1369,6 +1425,7 @@ function deleteItem(index) {
     }
     throttledSaveData();
     renderReplyLibrary();
+    _rlRestoreScrollState(scrollState);
 }
 
 function editItem(index, oldText) {
