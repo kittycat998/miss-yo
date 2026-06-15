@@ -1687,9 +1687,9 @@
         modal.className = 'shop-modal shop-settings-modal';
         modal.id = 'shop-settings-modal';
         modal.innerHTML = `
-            <button class="shop-modal-close" onclick="window.ShopApp.closeSettingsModal()">✕</button>
-            <div class="shop-modal-content" style="padding:24px 20px;max-width:360px;">
-                <div style="font-size:1.1rem;font-weight:700;margin-bottom:6px;text-align:center;">⚙️ 商城设置</div>
+            <div class="shop-modal-content shop-settings-content" style="padding:24px 20px;max-width:360px;">
+                <button class="shop-modal-close shop-settings-close" onclick="window.ShopApp.closeSettingsModal()">✕</button>
+                <div style="font-size:1.1rem;font-weight:700;margin-bottom:6px;text-align:center;padding-right:28px;">⚙️ 商城设置</div>
                 <div style="font-size:0.78rem;color:var(--text-light);margin-bottom:18px;text-align:center;line-height:1.5;">设置他自动帮你从购物车下单的检查时间和触发概率</div>
                 <label style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;font-size:0.9rem;color:var(--text);">
                     <span>自动下单</span>

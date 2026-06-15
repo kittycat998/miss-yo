@@ -1526,6 +1526,7 @@
                 if (modal) {
                     if (typeof renderEnvelopeLists === 'function') renderEnvelopeLists();
                     homeShowModal(modal);
+                    if (typeof window.ensureEnvelopeModalStack === 'function') window.ensureEnvelopeModalStack();
                 }
             },
             'moyu': () => {

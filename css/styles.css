@@ -15075,16 +15075,46 @@ body::before{
     z-index:76000 !important;
 }
 
-/* clean3: 信封投递阅读弹窗必须盖在信封列表弹窗之上 */
+/* 信封投递：阅读弹窗必须盖在信封列表弹窗之上；高于 homeShowModal 的 99999999，但不再用浏览器上限级 z-index。 */
 #envelope-modal {
-    z-index: 70020 !important;
+    z-index: 100000000 !important;
 }
 #envelope-modal .modal-content {
-    z-index: 70021 !important;
+    z-index: 100000001 !important;
 }
 #envelope-view-modal {
-    z-index: 70030 !important;
+    z-index: 100000100 !important;
 }
 #envelope-view-modal .modal-content {
-    z-index: 70031 !important;
+    z-index: 100000101 !important;
+}
+
+
+
+
+/* clean11: 数据管理备份抽屉层级止血。showModal 会把 #data-modal 抬到 1e8 级，抽屉不能再停在 9999。 */
+.dm-action-drawer{
+    z-index:100000420 !important;
+    position:fixed !important;
+    inset:0 !important;
+    align-items:stretch !important;
+    justify-content:flex-end !important;
+    transform:none !important;
+}
+.dm-action-drawer.open{
+    pointer-events:auto !important;
+    opacity:1 !important;
+}
+.dm-action-drawer .dm-drawer-sheet{
+    z-index:1 !important;
+    max-height:calc(92dvh - env(safe-area-inset-top, 0px)) !important;
+    overflow:auto !important;
+    -webkit-overflow-scrolling:touch !important;
+    transform:translateY(100%) !important;
+}
+.dm-action-drawer.open .dm-drawer-sheet{
+    transform:translateY(0) !important;
+}
+.dm-action-drawer .dm-drawer-backdrop{
+    z-index:0 !important;
 }
