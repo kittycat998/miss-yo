@@ -565,6 +565,7 @@ async function createNewSession(switchToIt = true) {
     };
 
     sessionList.push(newSession);
+    window.sessionList = sessionList;
     await localforage.setItem(`${APP_PREFIX}sessionList`, sessionList);
 
     if (switchToIt) {

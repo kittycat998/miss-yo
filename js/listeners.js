@@ -1,37 +1,61 @@
 function setupEventListeners() {
-    try {
-        initCoreListeners();
-        initModalListeners();
-        initChatActionListeners();
-        initHeaderAndSettingsListeners();
-        initDataManagementListeners();
-        initNewFeatureListeners();
-        setupTutorialListeners();
-        initMoodListeners();
-        initDecisionModule(); 
-        initAnniversaryModule(); 
-        initThemeEditor(); 
-        initThemeSchemes();
-        
-        initComboMenu(); 
-        
-    } catch (e) {
-        console.error("事件绑定过程中发生错误:", e);
-    }
+    // 不再让一个缺失按钮拖死整页事件绑定。
+    // SEA 媒体补丁删掉了旧的 group-chat-btn，但旧 state/listeners 还会找它；
+    // 如果整段用一个 try 包住，后面的设置卡片、表情包、批量、截图等监听都会直接断掉。
+    const safeBind = (name, fn) => {
+        try {
+            if (typeof fn === 'function') fn();
+        } catch (e) {
+            console.error(`[event-bind] ${name} 绑定失败:`, e);
+        }
+    };
+
+    safeBind('initCoreListeners', initCoreListeners);
+    safeBind('initModalListeners', initModalListeners);
+    safeBind('initChatActionListeners', initChatActionListeners);
+    safeBind('initHeaderAndSettingsListeners', initHeaderAndSettingsListeners);
+    safeBind('initDataManagementListeners', initDataManagementListeners);
+    safeBind('initNewFeatureListeners', initNewFeatureListeners);
+    safeBind('setupTutorialListeners', (typeof setupTutorialListeners === 'function') ? setupTutorialListeners : null);
+    safeBind('initMoodListeners', (typeof initMoodListeners === 'function') ? initMoodListeners : null);
+    safeBind('initDecisionModule', (typeof initDecisionModule === 'function') ? initDecisionModule : null);
+    safeBind('initAnniversaryModule', (typeof initAnniversaryModule === 'function') ? initAnniversaryModule : null);
+    safeBind('initThemeEditor', (typeof initThemeEditor === 'function') ? initThemeEditor : null);
+    safeBind('initThemeSchemes', (typeof initThemeSchemes === 'function') ? initThemeSchemes : null);
+    safeBind('initComboMenu', (typeof initComboMenu === 'function') ? initComboMenu : null);
 }
 
 function initChatActionListeners() {
+            const getMessageIdFromWrapper = (wrapper) => wrapper ? (wrapper.dataset.id || wrapper.dataset.msgId || '') : '';
+            const findMessageById = (id) => messages.find(m => String(m.id) === String(id));
+            const findMessageIndexById = (id) => messages.findIndex(m => String(m.id) === String(id));
+            const getMessageSummaryForReply = (message) => {
+                if (!message) return '';
+                if (message.type === 'red-packet' && message.redPacket) {
+                    const cents = Number(message.redPacket.amount || 0);
+                    const amountText = (cents / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    const note = message.redPacket.message || message.text || '恭喜发财';
+                    return `[红包] ¥${amountText}${note ? ' ' + note : ''}`;
+                }
+                if (message.type === 'voice') return message.voiceText ? `[语音] ${message.voiceText}` : '[语音]';
+                if (message.image && !message.text) return '🖼 图片';
+                return message.text || '';
+            };
             DOMElements.chatContainer.addEventListener('click', (e) => {
+
+                if (!e.target.closest('.message-meta-actions') && !e.target.closest('.red-packet-card')) {
+                    DOMElements.chatContainer.querySelectorAll('.message-content-wrapper.show-actions').forEach(el => el.classList.remove('show-actions'));
+                }
 
                 if (isBatchFavoriteMode || window.isScreenshotSelectMode) {
                     const wrapper = e.target.closest('.message-wrapper, .selectable-special-message');
                     if (wrapper && !e.target.closest('.message-meta-actions') && !e.target.closest('.call-event-delete')) {
-                        const messageId = Number(wrapper.dataset.id || wrapper.dataset.msgId);
-                        if (!Number.isNaN(messageId)) {
-                            const index = selectedMessages.indexOf(messageId);
+                        const messageId = getMessageIdFromWrapper(wrapper);
+                        if (messageId) {
+                            const selectedIndex = selectedMessages.findIndex(id => String(id) === String(messageId));
 
-                            if (index > -1) {
-                                selectedMessages.splice(index, 1);
+                            if (selectedIndex > -1) {
+                                selectedMessages.splice(selectedIndex, 1);
                                 wrapper.classList.remove('selected');
                             } else {
                                 selectedMessages.push(messageId);
@@ -56,7 +80,7 @@ function initChatActionListeners() {
                 const screenshotSelectBtn = e.target.closest('.screenshot-select-btn');
                 if (screenshotSelectBtn) {
                     const wrapper = e.target.closest('.message-wrapper');
-                    const messageId = wrapper ? Number(wrapper.dataset.id) : null;
+                    const messageId = getMessageIdFromWrapper(wrapper);
                     if (typeof toggleScreenshotSelectMode === 'function') {
                         toggleScreenshotSelectMode(messageId);
                     }
@@ -66,8 +90,8 @@ function initChatActionListeners() {
                 const favoriteBtn = e.target.closest('.favorite-action-btn'); 
                 if (favoriteBtn) {
                     const wrapper = e.target.closest('.message-wrapper');
-                    const messageId = Number(wrapper.dataset.id);
-                    const message = messages.find(m => m.id === messageId);
+                    const messageId = getMessageIdFromWrapper(wrapper);
+                    const message = findMessageById(messageId);
                     
                     if (message) {
                         message.favorited = !message.favorited;
@@ -88,13 +112,38 @@ function initChatActionListeners() {
                 const wrapper = e.target.closest('.message-wrapper');
                 if (!wrapper) return; 
                 
-                const messageId = Number(wrapper.dataset.id);
-                const message = messages.find(m => m.id === messageId);
+                const messageId = getMessageIdFromWrapper(wrapper);
+                const message = findMessageById(messageId);
                 if (!message) return;
 
+if (target.classList.contains('recall-btn')) {
+    if (message.timestamp) {
+        var elapsed = Date.now() - new Date(message.timestamp).getTime();
+        if (elapsed > 5 * 60 * 1000) {
+            showNotification('该消息已无法撤回', 'info', 2000);
+            return;
+        }
+    }
+    if (message.text) {
+        DOMElements.messageInput.value = message.text;
+        DOMElements.messageInput.focus();
+    }
+    var idx = findMessageIndexById(messageId);
+    if (idx > -1) {
+        var savedScrollTop = DOMElements.chatContainer.scrollTop;
+        messages.splice(idx, 1);
+        throttledSaveData();
+        renderMessages(true);
+        requestAnimationFrame(() => {
+            DOMElements.chatContainer.scrollTop = savedScrollTop;
+        });
+        showNotification('消息已撤回', 'success');
+    }
+    return;
+}
 if (target.classList.contains('delete-btn')) {
     if (confirm('确定要删除这条消息吗？')) {
-        const index = messages.findIndex(m => m.id === messageId);
+        const index = findMessageIndexById(messageId);
         if (index > -1) {
             const savedScrollTop = DOMElements.chatContainer.scrollTop;
             messages.splice(index, 1); 
@@ -112,7 +161,7 @@ if (target.classList.contains('delete-btn')) {
                     currentReplyTo = {
                         id: message.id,
                         sender: message.sender,
-                        text: message.text
+                        text: getMessageSummaryForReply(message)
                     };
                     updateReplyPreview();
                     DOMElements.messageInput.focus();
@@ -426,9 +475,11 @@ fileInput.addEventListener('change', function(e) {
             DOMElements.settingsModal.settingsBtn.addEventListener('click', () => {
                 showModal(DOMElements.settingsModal.modal);
             });
-            DOMElements.favoritesModal.favoritesBtn.addEventListener('click', () => {
-                showModal(document.getElementById('group-chat-modal'));
-            });
+            if (DOMElements.favoritesModal && DOMElements.favoritesModal.favoritesBtn) {
+                DOMElements.favoritesModal.favoritesBtn.addEventListener('click', () => {
+                    showModal(document.getElementById('group-chat-modal'));
+                });
+            }
 
 
 window.setReadReceiptStyle = function(style) {
@@ -452,11 +503,13 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
         '#read-receipts-toggle': { prop: 'readReceiptsEnabled', name: '已读回执' },
         '#typing-indicator-toggle': { prop: 'typingIndicatorEnabled', name: '正在输入' },
         '#read-no-reply-toggle': { prop: 'allowReadNoReply', name: '已读不回' },
-        '#emoji-mix-toggle': { prop: 'emojiMixEnabled', name: '表情消息' }
+        '#emoji-mix-toggle': { prop: 'emojiMixEnabled', name: '表情消息' },
+        '#kaomoji-mix-toggle': { prop: 'kaomojiMixEnabled', name: '颜文字混入' },
+        '#enter-key-send-toggle': { prop: 'enterKeySendEnabled', name: '回车键发送' }
     };
     for (const [selector, { prop }] of Object.entries(toggleSyncMap)) {
         const el = document.querySelector(selector);
-        const val = prop === 'emojiMixEnabled' ? (settings[prop] !== false) : !!settings[prop];
+        const val = (prop === 'emojiMixEnabled' || prop === 'kaomojiMixEnabled') ? (settings[prop] !== false) : !!settings[prop];
         if (el) el.classList.toggle('active', val);
     }
     const svSlider = document.getElementById('sound-volume-slider');
@@ -503,6 +556,22 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
     updateDelayUI();
     const immToggle = document.getElementById('immersive-toggle');
     if (immToggle) immToggle.classList.toggle('active', document.body.classList.contains('immersive-mode'));
+    // 同步信封相关开关
+    const envAutoToggle = document.getElementById('envelope-auto-send-toggle');
+    if (envAutoToggle) envAutoToggle.classList.toggle('active', !!settings.envelopeAutoSendEnabled);
+    const envCustomToggle = document.getElementById('envelope-custom-rule-toggle');
+    if (envCustomToggle) envCustomToggle.classList.toggle('active', !!settings.envelopeCustomRuleEnabled);
+    if (typeof updateEnvelopeSettingsUI === 'function') updateEnvelopeSettingsUI();
+    // 同步摸鱼显示详情开关
+    const moyuDetailToggle = document.getElementById('moyu-show-detail-toggle');
+    if (moyuDetailToggle) moyuDetailToggle.classList.toggle('active', !!settings.moyuShowDetail);
+    // 同步底部栏收纳开关
+    const collapseToggle = document.getElementById('bottom-collapse-cs-toggle');
+    if (collapseToggle) collapseToggle.classList.toggle('active', !!settings.bottomCollapseMode);
+    // 同步摸鱼自动生成开关
+    const moyuAutoToggle = document.getElementById('moyu-auto-generate-toggle');
+    if (moyuAutoToggle) moyuAutoToggle.classList.toggle('active', !!settings.moyuAutoGenerateEnabled);
+    if (typeof updateMoyuAutoGenerateUI === 'function') updateMoyuAutoGenerateUI();
     const rrStyle = settings.readReceiptStyle || 'icon';
     const rrIconBtn = document.getElementById('rr-style-icon');
     const rrTextBtn = document.getElementById('rr-style-text');
@@ -1078,8 +1147,25 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
                 '#typing-indicator-toggle': {
                     prop: 'typingIndicatorEnabled', name: '正在输入'},
                     '#read-no-reply-toggle': { prop: 'allowReadNoReply', name: '已读不回' },
-                    '#emoji-mix-toggle': { prop: 'emojiMixEnabled', name: '表情混入消息' }
+                    '#emoji-mix-toggle': { prop: 'emojiMixEnabled', name: '表情混入消息' },
+                    '#kaomoji-mix-toggle': { prop: 'kaomojiMixEnabled', name: '颜文字混入消息' },
+                    '#enter-key-send-toggle': { prop: 'enterKeySendEnabled', name: '回车键发送' },
+                    '#pinyin-card-toggle': { prop: 'pinyinCardEnabled', name: '拼字卡' }
 };
+
+            // 以下开关已有独立的 click 处理器，只需在初始化时同步 UI 状态
+            const _extraToggleSync = {
+                '#auto-send-toggle': 'autoSendEnabled',
+                '#moyu-auto-generate-toggle': 'moyuAutoGenerateEnabled',
+                '#moyu-show-detail-toggle': 'moyuShowDetail',
+                '#envelope-auto-send-toggle': 'envelopeAutoSendEnabled',
+                '#envelope-custom-rule-toggle': 'envelopeCustomRuleEnabled',
+                '#bottom-collapse-cs-toggle': 'bottomCollapseMode'
+            };
+            for (const [sel, prop] of Object.entries(_extraToggleSync)) {
+                const el = document.querySelector(sel);
+                if (el) el.classList.toggle('active', !!settings[prop]);
+            }
 
             for (const [selector, {
                 prop, name
@@ -1087,17 +1173,19 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
                 const element = document.querySelector(selector);
                 if (!element) continue;
 
-                const _initVal = prop === 'emojiMixEnabled' ? (settings[prop] !== false) : !!settings[prop];
+                const _initVal = (prop === 'emojiMixEnabled' || prop === 'kaomojiMixEnabled') ? (settings[prop] !== false) : !!settings[prop];
                 element.classList.toggle('active', _initVal);
 
                 element.addEventListener('click', () => {
-                    if (prop === 'emojiMixEnabled' && settings[prop] === undefined) settings[prop] = true;
+                    if ((prop === 'emojiMixEnabled' || prop === 'kaomojiMixEnabled') && settings[prop] === undefined) settings[prop] = true;
                     settings[prop] = !settings[prop];
                     throttledSaveData();
                     updateUI();
                     element.classList.toggle('active', !!settings[prop]);
                     if (prop !== 'soundEnabled') renderMessages(true);
                     showNotification(`${name}已${settings[prop] ? '开启': '关闭'}`, 'success');
+                    // 拼字卡开关时展开/收起设置面板
+                    if (prop === 'pinyinCardEnabled') updatePinyinCardUI();
                 });
             }
 
@@ -1308,6 +1396,327 @@ autoSendSlider.addEventListener('change', () => {
     manageAutoSendTimer(); 
     throttledSaveData();
 });
+
+// 拼字卡设置
+const pinyinCardSettings = document.getElementById('pinyin-card-settings');
+const pinyinCardMinSlider = document.getElementById('pinyin-card-min-slider');
+const pinyinCardMinValue = document.getElementById('pinyin-card-min-value');
+const pinyinCardMaxSlider = document.getElementById('pinyin-card-max-slider');
+const pinyinCardMaxValue = document.getElementById('pinyin-card-max-value');
+
+const updatePinyinCardUI = () => {
+    if (pinyinCardSettings) pinyinCardSettings.style.display = settings.pinyinCardEnabled ? 'block' : 'none';
+    if (pinyinCardMinSlider) {
+        const minVal = settings.pinyinCardMin || 2;
+        pinyinCardMinSlider.value = minVal;
+        pinyinCardMinValue.textContent = minVal + '句';
+    }
+    if (pinyinCardMaxSlider) {
+        const maxVal = settings.pinyinCardMax || 3;
+        pinyinCardMaxSlider.value = maxVal;
+        pinyinCardMaxValue.textContent = maxVal + '句';
+    }
+};
+updatePinyinCardUI();
+
+if (pinyinCardMinSlider) {
+    pinyinCardMinSlider.addEventListener('input', (e) => {
+        let val = parseInt(e.target.value);
+        if (val > (settings.pinyinCardMax || 3)) {
+            val = settings.pinyinCardMax || 3;
+            pinyinCardMinSlider.value = val;
+        }
+        settings.pinyinCardMin = val;
+        pinyinCardMinValue.textContent = val + '句';
+    });
+    pinyinCardMinSlider.addEventListener('change', () => { throttledSaveData(); });
+}
+
+if (pinyinCardMaxSlider) {
+    pinyinCardMaxSlider.addEventListener('input', (e) => {
+        let val = parseInt(e.target.value);
+        if (val < (settings.pinyinCardMin || 2)) {
+            val = settings.pinyinCardMin || 2;
+            pinyinCardMaxSlider.value = val;
+        }
+        settings.pinyinCardMax = val;
+        pinyinCardMaxValue.textContent = val + '句';
+    });
+    pinyinCardMaxSlider.addEventListener('change', () => { throttledSaveData(); });
+}
+
+// 摸鱼自动生成设置
+const moyuAutoGenerateToggle = document.getElementById('moyu-auto-generate-toggle');
+const moyuAutoGenerateControl = document.getElementById('moyu-auto-generate-control');
+const moyuAutoGenerateSlider = document.getElementById('moyu-auto-generate-slider');
+const moyuAutoGenerateValue = document.getElementById('moyu-auto-generate-value');
+
+const updateMoyuAutoGenerateUI = () => {
+    if (moyuAutoGenerateToggle) {
+        moyuAutoGenerateToggle.classList.toggle('active', !!settings.moyuAutoGenerateEnabled);
+    }
+    if (moyuAutoGenerateControl) {
+        moyuAutoGenerateControl.style.display = settings.moyuAutoGenerateEnabled ? "flex" : "none";
+    }
+    const currentVal = settings.moyuAutoGenerateInterval || 60;
+    if (moyuAutoGenerateSlider) {
+        moyuAutoGenerateSlider.value = currentVal;
+    }
+    if (moyuAutoGenerateValue) {
+        moyuAutoGenerateValue.textContent = `${currentVal}秒`;
+    }
+};
+
+updateMoyuAutoGenerateUI();
+
+if (moyuAutoGenerateToggle) {
+    moyuAutoGenerateToggle.addEventListener('click', () => {
+        settings.moyuAutoGenerateEnabled = !settings.moyuAutoGenerateEnabled;
+        updateMoyuAutoGenerateUI();
+        manageMoyuAutoGenerateTimer();
+        throttledSaveData();
+        showNotification(`摸鱼自动生成已${settings.moyuAutoGenerateEnabled ? '开启' : '关闭'}`, 'success');
+    });
+}
+
+if (moyuAutoGenerateSlider) {
+    moyuAutoGenerateSlider.value = settings.moyuAutoGenerateInterval || 60;
+    moyuAutoGenerateSlider.addEventListener('input', (e) => {
+        const val = parseInt(e.target.value);
+        settings.moyuAutoGenerateInterval = val;
+        if (moyuAutoGenerateValue) {
+            moyuAutoGenerateValue.textContent = `${val}秒`;
+        }
+    });
+    moyuAutoGenerateSlider.addEventListener('change', () => {
+        manageMoyuAutoGenerateTimer();
+        throttledSaveData();
+    });
+}
+
+// 摸鱼显示详情设置
+const moyuShowDetailToggle = document.getElementById('moyu-show-detail-toggle');
+
+const updateMoyuShowDetailUI = () => {
+    if (moyuShowDetailToggle) {
+        moyuShowDetailToggle.classList.toggle('active', !!settings.moyuShowDetail);
+    }
+};
+
+updateMoyuShowDetailUI();
+
+if (moyuShowDetailToggle) {
+    moyuShowDetailToggle.addEventListener('click', () => {
+        settings.moyuShowDetail = !settings.moyuShowDetail;
+        updateMoyuShowDetailUI();
+        throttledSaveData();
+        showNotification(`显示具体信息已${settings.moyuShowDetail ? '开启' : '关闭'}`, 'success');
+    });
+}
+
+// 信封投递设置
+const envelopeAutoSendToggle = document.getElementById('envelope-auto-send-toggle');
+const envelopeAutoSendSettings = document.getElementById('envelope-auto-send-settings');
+const envelopeAutoSendMinValSlider = document.getElementById('envelope-auto-send-min-val-slider');
+const envelopeAutoSendMinUnit = document.getElementById('envelope-auto-send-min-unit');
+const envelopeAutoSendMinValDisplay = document.getElementById('envelope-auto-send-min-val-display');
+const envelopeAutoSendMaxValSlider = document.getElementById('envelope-auto-send-max-val-slider');
+const envelopeAutoSendMaxUnit = document.getElementById('envelope-auto-send-max-unit');
+const envelopeAutoSendMaxValDisplay = document.getElementById('envelope-auto-send-max-val-display');
+const envelopeCustomRuleToggle = document.getElementById('envelope-custom-rule-toggle');
+const envelopeCustomRuleSettings = document.getElementById('envelope-custom-rule-settings');
+const envelopeReplyMinValSlider = document.getElementById('envelope-reply-min-val-slider');
+const envelopeReplyMinUnit = document.getElementById('envelope-reply-min-unit');
+const envelopeReplyMinValDisplay = document.getElementById('envelope-reply-min-val-display');
+const envelopeReplyMaxValSlider = document.getElementById('envelope-reply-max-val-slider');
+const envelopeReplyMaxUnit = document.getElementById('envelope-reply-max-unit');
+const envelopeReplyMaxValDisplay = document.getElementById('envelope-reply-max-val-display');
+const envelopeReplyMinSentencesSlider = document.getElementById('envelope-reply-min-sentences-slider');
+const envelopeReplyMinSentencesValue = document.getElementById('envelope-reply-min-sentences-value');
+const envelopeReplyMaxSentencesSlider = document.getElementById('envelope-reply-max-sentences-slider');
+const envelopeReplyMaxSentencesValue = document.getElementById('envelope-reply-max-sentences-value');
+
+const unitLabelMap = { minutes: '分钟', hours: '小时', days: '天' };
+const unitToMs = { minutes: 60 * 1000, hours: 60 * 60 * 1000, days: 24 * 60 * 60 * 1000 };
+
+function getEnvelopeMinMs() {
+    return (settings.envelopeReplyMinVal || 10) * (unitToMs[settings.envelopeReplyMinUnit] || unitToMs.hours);
+}
+function getEnvelopeMaxMs() {
+    return (settings.envelopeReplyMaxVal || 24) * (unitToMs[settings.envelopeReplyMaxUnit] || unitToMs.hours);
+}
+
+const updateEnvelopeSettingsUI = () => {
+    if (envelopeAutoSendToggle) {
+        envelopeAutoSendToggle.classList.toggle('active', !!settings.envelopeAutoSendEnabled);
+    }
+    if (envelopeAutoSendSettings) {
+        envelopeAutoSendSettings.style.display = settings.envelopeAutoSendEnabled ? 'block' : 'none';
+    }
+    if (envelopeCustomRuleToggle) {
+        envelopeCustomRuleToggle.classList.toggle('active', !!settings.envelopeCustomRuleEnabled);
+    }
+    if (envelopeCustomRuleSettings) {
+        envelopeCustomRuleSettings.style.display = settings.envelopeCustomRuleEnabled ? 'block' : 'none';
+    }
+    // 更新时空来信间隔滑块
+    const autoMinV = settings.envelopeAutoSendMinVal || 1;
+    const autoMaxV = settings.envelopeAutoSendMaxVal || 3;
+    const autoMinU = settings.envelopeAutoSendMinUnit || 'hours';
+    const autoMaxU = settings.envelopeAutoSendMaxUnit || 'hours';
+    if (envelopeAutoSendMinValSlider) envelopeAutoSendMinValSlider.value = Math.min(autoMinV, 10);
+    if (envelopeAutoSendMinUnit) envelopeAutoSendMinUnit.value = autoMinU;
+    if (envelopeAutoSendMinValDisplay) envelopeAutoSendMinValDisplay.textContent = autoMinV + unitLabelMap[autoMinU];
+    if (envelopeAutoSendMaxValSlider) envelopeAutoSendMaxValSlider.value = Math.min(autoMaxV, 10);
+    if (envelopeAutoSendMaxUnit) envelopeAutoSendMaxUnit.value = autoMaxU;
+    if (envelopeAutoSendMaxValDisplay) envelopeAutoSendMaxValDisplay.textContent = autoMaxV + unitLabelMap[autoMaxU];
+    // 更新回信间隔滑块
+    const minV = settings.envelopeReplyMinVal || 10;
+    const maxV = settings.envelopeReplyMaxVal || 24;
+    const minU = settings.envelopeReplyMinUnit || 'hours';
+    const maxU = settings.envelopeReplyMaxUnit || 'hours';
+    if (envelopeReplyMinValSlider) envelopeReplyMinValSlider.value = Math.min(minV, 10);
+    if (envelopeReplyMinUnit) envelopeReplyMinUnit.value = minU;
+    if (envelopeReplyMinValDisplay) envelopeReplyMinValDisplay.textContent = minV + unitLabelMap[minU];
+    if (envelopeReplyMaxValSlider) envelopeReplyMaxValSlider.value = Math.min(maxV, 10);
+    if (envelopeReplyMaxUnit) envelopeReplyMaxUnit.value = maxU;
+    if (envelopeReplyMaxValDisplay) envelopeReplyMaxValDisplay.textContent = maxV + unitLabelMap[maxU];
+    // 更新回信句数滑块
+    const minS = settings.envelopeReplyMinSentences || 8;
+    const maxS = settings.envelopeReplyMaxSentences || 12;
+    if (envelopeReplyMinSentencesSlider) envelopeReplyMinSentencesSlider.value = minS;
+    if (envelopeReplyMinSentencesValue) envelopeReplyMinSentencesValue.textContent = minS + '句';
+    if (envelopeReplyMaxSentencesSlider) envelopeReplyMaxSentencesSlider.value = maxS;
+    if (envelopeReplyMaxSentencesValue) envelopeReplyMaxSentencesValue.textContent = maxS + '句';
+    // 更新提示文本中的梦角昵称
+    const envelopeAutoSendHint = document.getElementById('envelope-auto-send-hint');
+    if (envelopeAutoSendHint) {
+        const pName = (typeof settings !== 'undefined' && settings.partnerName) ? settings.partnerName : '梦角';
+        envelopeAutoSendHint.textContent = '开启后，' + pName + '会随机主动写信';
+    }
+};
+
+updateEnvelopeSettingsUI();
+
+if (envelopeAutoSendToggle) {
+    envelopeAutoSendToggle.addEventListener('click', () => {
+        settings.envelopeAutoSendEnabled = !settings.envelopeAutoSendEnabled;
+        updateEnvelopeSettingsUI();
+        throttledSaveData();
+        if (typeof manageEnvelopeAutoSendTimer === 'function') manageEnvelopeAutoSendTimer();
+        showNotification(`主动写信已${settings.envelopeAutoSendEnabled ? '开启' : '关闭'}`, 'success');
+    });
+}
+
+// 时空来信间隔 - 最少
+if (envelopeAutoSendMinValSlider) {
+    envelopeAutoSendMinValSlider.addEventListener('input', (e) => {
+        const val = parseInt(e.target.value);
+        settings.envelopeAutoSendMinVal = val;
+        if (envelopeAutoSendMinValDisplay) envelopeAutoSendMinValDisplay.textContent = val + unitLabelMap[settings.envelopeAutoSendMinUnit || 'hours'];
+    });
+    envelopeAutoSendMinValSlider.addEventListener('change', () => { throttledSaveData(); if (typeof manageEnvelopeAutoSendTimer === 'function') manageEnvelopeAutoSendTimer(); });
+}
+if (envelopeAutoSendMinUnit) {
+    envelopeAutoSendMinUnit.addEventListener('change', (e) => {
+        settings.envelopeAutoSendMinUnit = e.target.value;
+        if (envelopeAutoSendMinValDisplay) envelopeAutoSendMinValDisplay.textContent = (settings.envelopeAutoSendMinVal || 1) + unitLabelMap[settings.envelopeAutoSendMinUnit];
+        throttledSaveData();
+        if (typeof manageEnvelopeAutoSendTimer === 'function') manageEnvelopeAutoSendTimer();
+    });
+}
+
+// 时空来信间隔 - 最多
+if (envelopeAutoSendMaxValSlider) {
+    envelopeAutoSendMaxValSlider.addEventListener('input', (e) => {
+        const val = parseInt(e.target.value);
+        settings.envelopeAutoSendMaxVal = val;
+        if (envelopeAutoSendMaxValDisplay) envelopeAutoSendMaxValDisplay.textContent = val + unitLabelMap[settings.envelopeAutoSendMaxUnit || 'hours'];
+    });
+    envelopeAutoSendMaxValSlider.addEventListener('change', () => { throttledSaveData(); if (typeof manageEnvelopeAutoSendTimer === 'function') manageEnvelopeAutoSendTimer(); });
+}
+if (envelopeAutoSendMaxUnit) {
+    envelopeAutoSendMaxUnit.addEventListener('change', (e) => {
+        settings.envelopeAutoSendMaxUnit = e.target.value;
+        if (envelopeAutoSendMaxValDisplay) envelopeAutoSendMaxValDisplay.textContent = (settings.envelopeAutoSendMaxVal || 3) + unitLabelMap[settings.envelopeAutoSendMaxUnit];
+        throttledSaveData();
+        if (typeof manageEnvelopeAutoSendTimer === 'function') manageEnvelopeAutoSendTimer();
+    });
+}
+
+if (envelopeCustomRuleToggle) {
+    envelopeCustomRuleToggle.addEventListener('click', () => {
+        settings.envelopeCustomRuleEnabled = !settings.envelopeCustomRuleEnabled;
+        updateEnvelopeSettingsUI();
+        throttledSaveData();
+        showNotification(`自定义回信规律已${settings.envelopeCustomRuleEnabled ? '开启' : '关闭'}`, 'success');
+    });
+}
+
+// 回信间隔 - 最少
+if (envelopeReplyMinValSlider) {
+    envelopeReplyMinValSlider.addEventListener('input', (e) => {
+        const val = parseInt(e.target.value);
+        settings.envelopeReplyMinVal = val;
+        if (envelopeReplyMinValDisplay) envelopeReplyMinValDisplay.textContent = val + unitLabelMap[settings.envelopeReplyMinUnit || 'hours'];
+    });
+    envelopeReplyMinValSlider.addEventListener('change', throttledSaveData);
+}
+if (envelopeReplyMinUnit) {
+    envelopeReplyMinUnit.addEventListener('change', (e) => {
+        settings.envelopeReplyMinUnit = e.target.value;
+        if (envelopeReplyMinValDisplay) envelopeReplyMinValDisplay.textContent = (settings.envelopeReplyMinVal || 10) + unitLabelMap[settings.envelopeReplyMinUnit];
+        throttledSaveData();
+    });
+}
+
+// 回信间隔 - 最多
+if (envelopeReplyMaxValSlider) {
+    envelopeReplyMaxValSlider.addEventListener('input', (e) => {
+        const val = parseInt(e.target.value);
+        settings.envelopeReplyMaxVal = val;
+        if (envelopeReplyMaxValDisplay) envelopeReplyMaxValDisplay.textContent = val + unitLabelMap[settings.envelopeReplyMaxUnit || 'hours'];
+    });
+    envelopeReplyMaxValSlider.addEventListener('change', throttledSaveData);
+}
+if (envelopeReplyMaxUnit) {
+    envelopeReplyMaxUnit.addEventListener('change', (e) => {
+        settings.envelopeReplyMaxUnit = e.target.value;
+        if (envelopeReplyMaxValDisplay) envelopeReplyMaxValDisplay.textContent = (settings.envelopeReplyMaxVal || 24) + unitLabelMap[settings.envelopeReplyMaxUnit];
+        throttledSaveData();
+    });
+}
+
+// 回信句数滑块
+if (envelopeReplyMinSentencesSlider) {
+    envelopeReplyMinSentencesSlider.addEventListener('input', (e) => {
+        const val = parseInt(e.target.value);
+        settings.envelopeReplyMinSentences = val;
+        if (envelopeReplyMinSentencesValue) envelopeReplyMinSentencesValue.textContent = val + '句';
+        if (settings.envelopeReplyMaxSentences < val) {
+            settings.envelopeReplyMaxSentences = val;
+            if (envelopeReplyMaxSentencesSlider) envelopeReplyMaxSentencesSlider.value = val;
+            if (envelopeReplyMaxSentencesValue) envelopeReplyMaxSentencesValue.textContent = val + '句';
+        }
+    });
+    envelopeReplyMinSentencesSlider.addEventListener('change', throttledSaveData);
+}
+
+if (envelopeReplyMaxSentencesSlider) {
+    envelopeReplyMaxSentencesSlider.addEventListener('input', (e) => {
+        const val = parseInt(e.target.value);
+        settings.envelopeReplyMaxSentences = val;
+        if (envelopeReplyMaxSentencesValue) envelopeReplyMaxSentencesValue.textContent = val + '句';
+        if (settings.envelopeReplyMinSentences > val) {
+            settings.envelopeReplyMinSentences = val;
+            if (envelopeReplyMinSentencesSlider) envelopeReplyMinSentencesSlider.value = val;
+            if (envelopeReplyMinSentencesValue) envelopeReplyMinSentencesValue.textContent = val + '句';
+        }
+    });
+    envelopeReplyMaxSentencesSlider.addEventListener('change', throttledSaveData);
+}
+
+
 
             const resetBgBtn = document.getElementById('reset-default-bg');
             if (resetBgBtn) {
@@ -3196,6 +3605,7 @@ window.toggleCollapsedExtras = function() {
     }
     wireExtra('combo-btn-extra', 'combo-btn');
     wireExtra('batch-btn-extra', 'batch-btn');
+    wireExtra('voice-btn-extra', 'voice-btn');
 };
 
 window.exitCollapseMode = function() {

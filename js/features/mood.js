@@ -72,8 +72,8 @@ function toggleBatchFavoriteMode() {
                 document.body.classList.add('screenshot-select-mode');
                 hideBatchFavoriteActions();
                 showScreenshotSelectActions();
-                if (initialMessageId !== undefined && initialMessageId !== null && !Number.isNaN(Number(initialMessageId))) {
-                    selectedMessages.push(Number(initialMessageId));
+                if (initialMessageId !== undefined && initialMessageId !== null && String(initialMessageId) !== '') {
+                    selectedMessages.push(String(initialMessageId));
                 }
                 showNotification('多选截图已开启，点圆圈选择消息', 'info');
             } else {
@@ -128,6 +128,11 @@ function toggleBatchFavoriteMode() {
             var ts = msg.timestamp ? new Date(msg.timestamp) : new Date();
             var sender = msg.sender === 'user' ? (settings.myName || '我') : (msg.sender || settings.partnerName || '对方');
             var text = msg.text || '';
+            if (msg.type === 'red-packet' && msg.redPacket) {
+                var cents = Number(msg.redPacket.amount || 0);
+                var amountText = (cents / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                text = '[红包信息:]¥' + amountText + (msg.redPacket.message ? ' ' + msg.redPacket.message : '');
+            }
             if (msg.image) text += (text ? '\n' : '') + '[图片/表情] ' + msg.image;
             return '[' + ts.toLocaleString('zh-CN', { hour12: false }) + '] ' + sender + '：' + text;
         }
@@ -220,6 +225,38 @@ function toggleBatchFavoriteMode() {
             return da.getFullYear() === db.getFullYear() && da.getMonth() === db.getMonth() && da.getDate() === db.getDate();
         }
 
+
+        function _shotRedPacketInfo(msg) {
+            var rp = (msg && msg.redPacket) || {};
+            var cents = Number(rp.amount || 0);
+            var money = '¥' + (cents / 100).toFixed(2);
+            var note = rp.message || msg.text || '恭喜发财，大吉大利';
+            var status = rp.status || 'pending';
+            var statusText = status === 'received' ? '已领取' : (status === 'expired' ? '已退回' : '待领取');
+            return { money: money, note: String(note || ''), statusText: statusText };
+        }
+
+        function _shotDrawRedPacket(ctx, x, y, w, h, isUser, info) {
+            var topH = Math.round(h * 0.68);
+            _shotRoundRect(ctx, x, y, w, h, 12);
+            ctx.save(); ctx.clip();
+            var grad = ctx.createLinearGradient(x, y, x + w, y + topH);
+            grad.addColorStop(0, '#f5a24a'); grad.addColorStop(1, '#e86f3d');
+            ctx.fillStyle = grad; ctx.fillRect(x, y, w, topH);
+            ctx.fillStyle = '#fff6df'; ctx.fillRect(x, y + topH, w, h - topH);
+            ctx.restore();
+            ctx.save();
+            ctx.fillStyle = '#ffe1a8'; ctx.beginPath(); ctx.arc(x + 34, y + 33, 17, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#d84835'; ctx.font = 'bold 16px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('¥', x + 34, y + 34);
+            ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillStyle = '#fff'; ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
+            var noteLines = _shotWrapText(ctx, info.note || '恭喜发财，大吉大利', w - 72).slice(0, 2);
+            noteLines.forEach(function(line, idx) { ctx.fillText(line, x + 62, y + 30 + idx * 19); });
+            ctx.font = '12px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.86)'; ctx.fillText(info.statusText || '红包', x + 62, y + topH - 12);
+            ctx.fillStyle = '#b56b2a'; ctx.font = '13px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif'; ctx.fillText('微信红包', x + 12, y + h - 12);
+            ctx.textAlign = 'right'; ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif'; ctx.fillText(info.money, x + w - 12, y + h - 12);
+            ctx.restore();
+        }
+
         function _shotLoadImage(src) {
             return new Promise(function(resolve) {
                 if (!src) return resolve(null);
@@ -260,6 +297,13 @@ function toggleBatchFavoriteMode() {
                     ctx.font = '12px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
                     var specialLines = _shotWrapText(ctx, specialText, 260);
                     items.push({ type: 'system', text: specialText, lines: specialLines, h: Math.max(34, specialLines.length * 18 + 18), msg: msg });
+                    prevMsg = msg;
+                    return;
+                }
+                if (msg.type === 'red-packet' && msg.redPacket) {
+                    var rpInfo = _shotRedPacketInfo(msg);
+                    var rpW = 220, rpH = 112;
+                    items.push({ type: 'message', msg: msg, img: null, lines: [], bubbleW: rpW, bubbleH: rpH, imageW: 0, imageH: 0, redPacket: true, redPacketInfo: rpInfo, h: Math.max(44, rpH + 26) + 10 });
                     prevMsg = msg;
                     return;
                 }
@@ -421,7 +465,9 @@ function toggleBatchFavoriteMode() {
 
                 var bubbleX = isUser ? (avX - 9 - it.bubbleW) : (avX + avSize + 9);
                 var bubbleY = y;
-                if (msg.image && !it.lines.length) {
+                if (it.redPacket) {
+                    _shotDrawRedPacket(ctx, bubbleX, bubbleY, it.bubbleW, it.bubbleH, isUser, it.redPacketInfo || _shotRedPacketInfo(msg));
+                } else if (msg.image && !it.lines.length) {
                     if (it.img) {
                         _shotRoundRect(ctx, bubbleX, bubbleY, it.imageW, it.imageH, 12);
                         ctx.save(); ctx.clip();
@@ -653,7 +699,7 @@ function toggleBatchFavoriteMode() {
             const count = selectedMessages.length;
 
             selectedMessages.forEach(msgId => {
-                const message = messages.find(m => m.id === msgId);
+                const message = messages.find(m => String(m.id) === String(msgId));
                 if (message) {
                     message.favorited = true;
                 }

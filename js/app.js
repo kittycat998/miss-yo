@@ -15,6 +15,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         welcomeScreen.classList.add('hidden');
         setTimeout(() => {
             welcomeScreen.style.display = 'none';
+            // 加载动画结束后显示主页
+            if (typeof window.showHomePage === 'function') {
+                window.showHomePage();
+            }
         }, 800);
     };
 

@@ -293,6 +293,7 @@ function deduplicateContentArray(arr, baseSystemArray = []) {
                 }
             }, 500);
         };
+        window.throttledSaveData = throttledSaveData;
 
 async function applyCustomFont(url) {
     if (!url || !url.trim()) {
