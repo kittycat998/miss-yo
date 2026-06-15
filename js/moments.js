@@ -109,6 +109,57 @@
         || value.startsWith('blob:'));
   }
 
+  function isPersistentAvatar(value) {
+    // blob: 只是本次页面临时地址，刷新/重新进桌面网页后一定容易裂开，不能当保存值。
+    return isValidProfileValue(value)
+      && (value.startsWith('data:image/')
+        || value.startsWith('http://')
+        || value.startsWith('https://')
+        || value.startsWith('./')
+        || value.startsWith('/'));
+  }
+
+  function safeStorageSet(key, value) {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch(e) {
+      console.warn('localStorage 写入失败，已跳过:', key, e);
+      return false;
+    }
+  }
+
+  function safeHomeSet(key, value) {
+    try {
+      if (typeof homeSetItem === 'function') homeSetItem(key, value);
+      else localStorage.setItem(key, value);
+      return true;
+    } catch(e) {
+      console.warn('Home 设置写入失败，已跳过:', key, e);
+      return false;
+    }
+  }
+
+  async function safeHomeSetLarge(key, value) {
+    try {
+      if (typeof homeSetLargeItem === 'function') {
+        await homeSetLargeItem(key, value);
+        return true;
+      }
+    } catch(e) {
+      console.warn('Home 大容量写入失败:', key, e);
+    }
+    if (typeof localforage !== 'undefined') {
+      try {
+        await localforage.setItem(typeof homeKey === 'function' ? homeKey(key) : key, value);
+        return true;
+      } catch(e) {
+        console.warn('localforage 写入失败:', key, e);
+      }
+    }
+    return safeHomeSet(key, value);
+  }
+
   function applyMomentsProfile(profile) {
     if (!profile || typeof profile !== 'object') return;
     if (isValidProfileValue(profile.name)) userConfig.name = profile.name.trim();
@@ -128,7 +179,7 @@
   function getSavedImageFromLocal(key) {
     try {
       const value = localStorage.getItem(scopedMomentsKey(key)) || localStorage.getItem(key);
-      return isValidAvatar(value) ? value : null;
+      return isPersistentAvatar(value) ? value : null;
     } catch(e) {
       return null;
     }
@@ -139,9 +190,9 @@
     if (typeof localforage !== 'undefined') {
       try {
         const value = await localforage.getItem(scopedMomentsKey(key));
-        if (isValidAvatar(value)) return value;
+        if (isPersistentAvatar(value)) return value;
         const legacyValue = await localforage.getItem(key);
-        if (isValidAvatar(legacyValue)) return legacyValue;
+        if (isPersistentAvatar(legacyValue)) return legacyValue;
       } catch(e) {}
     }
     const localValue = getSavedImageFromLocal(key);
@@ -176,7 +227,7 @@
     const momentsProfile = getSavedMomentsProfile();
 
     const lsAvatar = typeof homeGetItem === 'function' ? homeGetItem('home_avatar_me') : localStorage.getItem('home_avatar_me');
-    if (isValidAvatar(lsAvatar)) avatarUrl = lsAvatar;
+    if (isPersistentAvatar(lsAvatar)) avatarUrl = lsAvatar;
     const lsProfile = typeof homeGetItem === 'function' ? homeGetItem('profile_me') : localStorage.getItem('profile_me');
     if (lsProfile) {
       try {
@@ -184,13 +235,13 @@
         if (!userName && isValidProfileValue(profile.name)) userName = profile.name;
         if (!userIdentity && isValidProfileValue(profile.identity)) userIdentity = profile.identity;
         if (!userSignature && isValidProfileValue(profile.signature)) userSignature = profile.signature;
-        if (!avatarUrl && isValidAvatar(profile.avatar)) avatarUrl = profile.avatar;
+        if (!avatarUrl && isPersistentAvatar(profile.avatar)) avatarUrl = profile.avatar;
       } catch(e) {}
     }
 
     if (typeof homeGetItem === 'function') {
       const routedAvatar = homeGetItem('home_avatar_me');
-      if (!avatarUrl && isValidAvatar(routedAvatar)) avatarUrl = routedAvatar;
+      if (!avatarUrl && isPersistentAvatar(routedAvatar)) avatarUrl = routedAvatar;
       if (!userName || !userIdentity || !userSignature || !avatarUrl) {
         const profileStr = homeGetItem('profile_me');
         if (profileStr) {
@@ -199,7 +250,7 @@
             if (!userName && isValidProfileValue(profile.name)) userName = profile.name;
             if (!userIdentity && isValidProfileValue(profile.identity)) userIdentity = profile.identity;
             if (!userSignature && isValidProfileValue(profile.signature)) userSignature = profile.signature;
-            if (!avatarUrl && isValidAvatar(profile.avatar)) avatarUrl = profile.avatar;
+            if (!avatarUrl && isPersistentAvatar(profile.avatar)) avatarUrl = profile.avatar;
           } catch(e) {}
         }
       }
@@ -218,7 +269,7 @@
             if (!userName && isValidProfileValue(profile.name)) userName = profile.name;
             if (!userIdentity && isValidProfileValue(profile.identity)) userIdentity = profile.identity;
             if (!userSignature && isValidProfileValue(profile.signature)) userSignature = profile.signature;
-            if (!avatarUrl && isValidAvatar(profile.avatar)) avatarUrl = profile.avatar;
+            if (!avatarUrl && isPersistentAvatar(profile.avatar)) avatarUrl = profile.avatar;
           }
         }
       } catch(e) {}
@@ -539,41 +590,44 @@
   }
 
   async function persistMomentsImage(key, imageData, maxWidth, quality) {
-    if (!isValidAvatar(imageData)) return null;
-    let finalData = imageData;
-
-    // 先清掉旧图，避免新图保存失败时继续读到旧图。
+    if (!isValidAvatar(imageData) || imageData.startsWith('blob:')) return null;
     const scopedKey = scopedMomentsKey(key);
-    try { localStorage.removeItem(scopedKey); } catch(e) {}
-    if (typeof localforage !== 'undefined') {
-      try { await localforage.removeItem(scopedKey); } catch(e) {}
+    let fullData = imageData;
+    let compactData = imageData;
+
+    try {
+      compactData = await compressImage(imageData, maxWidth, quality);
+    } catch(e) {
+      compactData = imageData;
     }
 
-    // localforage 容量更大，优先保存原图，作为朋友圈头像/背景的权威版本。
+    // 先写新图，成功后再清旧图；避免“先删旧图，新图又写失败”导致头像直接裂开。
+    let savedLarge = false;
     if (typeof localforage !== 'undefined') {
       try {
-        await localforage.setItem(scopedKey, finalData);
+        await localforage.setItem(scopedKey, fullData);
+        savedLarge = true;
       } catch(e) {
         try {
-          finalData = await compressImage(imageData, maxWidth, quality);
-          await localforage.setItem(scopedKey, finalData);
+          await localforage.setItem(scopedKey, compactData);
+          fullData = compactData;
+          savedLarge = true;
         } catch(e2) {
           console.warn('朋友圈图片保存到 localforage 失败:', key, e2);
         }
       }
     }
 
-    // localStorage 只做同步兜底，保存压缩图，避免容量超限。
+    // localStorage 只放压缩图，不能塞原图；PWA 很容易因为 5MB 限额保存失败。
     try {
-      const localData = finalData.length > IDB_IMAGE_THRESHOLD
-        ? await compressImage(finalData, maxWidth, quality)
-        : finalData;
-      localStorage.setItem(scopedKey, localData);
+      safeStorageSet(scopedKey, compactData);
+      // 兼容旧全局键：只放小图，避免旧入口读取不到。
+      safeStorageSet(key, compactData);
     } catch(e) {
       console.warn('朋友圈图片保存到 localStorage 失败，仅保留 localforage:', key, e);
     }
 
-    return finalData;
+    return savedLarge ? fullData : compactData;
   }
 
   // 保存朋友圈数据到 localStorage（视频和大图片存 IndexedDB，localStorage 只保留引用）
@@ -657,7 +711,7 @@
       // 1. 从聊天当前会话 settings 获取，确保对象切换后以当前对象为准
       if (window.settings) {
         if (window.settings.partnerName) partnerName = window.settings.partnerName;
-        if (window.settings.partnerAvatar) partnerAvatar = window.settings.partnerAvatar;
+        if (isPersistentAvatar(window.settings.partnerAvatar)) partnerAvatar = window.settings.partnerAvatar;
       }
 
       // 2. 从 Home 当前会话存储读取；若当前会话无数据，homeGetItem 会回退旧全局数据
@@ -666,23 +720,25 @@
         if (scopedProfile) {
           const partner = JSON.parse(scopedProfile);
           if (partner.name) partnerName = partner.name;
-          if (partner.avatar) partnerAvatar = partner.avatar;
+          if (isPersistentAvatar(partner.avatar)) partnerAvatar = partner.avatar;
         }
         const scopedAvatar = homeGetItem('home_avatar_partner');
-        if (scopedAvatar) partnerAvatar = scopedAvatar;
+        if (isPersistentAvatar(scopedAvatar)) partnerAvatar = scopedAvatar;
       }
 
       // 3. 兼容旧全局数据：只在 settings/Home 当前会话都没有头像时使用
       if (!window.settings && typeof localforage !== 'undefined') {
         var lfAvatar = await localforage.getItem('home_avatar_partner');
-        if (lfAvatar) partnerAvatar = lfAvatar;
+        if (isPersistentAvatar(lfAvatar)) partnerAvatar = lfAvatar;
         var lfProfile = await localforage.getItem('profile_partner');
         if (lfProfile) {
           var profile = JSON.parse(lfProfile);
           if (profile.name) partnerName = profile.name;
-          if (profile.avatar) partnerAvatar = profile.avatar;
+          if (isPersistentAvatar(profile.avatar)) partnerAvatar = profile.avatar;
         }
       }
+      const momentsPartnerAvatar = await getSavedImage('moments_partner_avatar');
+      if (momentsPartnerAvatar) partnerAvatar = momentsPartnerAvatar;
     } catch(e) {}
 
     cachedPartnerName = partnerName;
@@ -704,8 +760,8 @@
       const profileStr = typeof homeGetItem === 'function' ? homeGetItem('profile_partner') : localStorage.getItem('profile_partner');
       const profile = profileStr ? JSON.parse(profileStr) : {};
       profile.name = clean;
-      if (typeof homeSetItem === 'function') homeSetItem('profile_partner', JSON.stringify(profile));
-      else localStorage.setItem('profile_partner', JSON.stringify(profile));
+      if (profile.avatar && !isPersistentAvatar(profile.avatar)) delete profile.avatar;
+      safeHomeSet('profile_partner', JSON.stringify(profile));
       if (window.settings) window.settings.partnerName = clean;
       if (typeof saveData === 'function') saveData();
       if (window.SESSION_ID && Array.isArray(window.sessionList) && typeof localforage !== 'undefined') {
@@ -720,26 +776,33 @@
     } catch(e) {}
   }
 
-  function saveMomentsPartnerAvatar(avatar) {
-    if (!isValidAvatar(avatar)) return;
-    cachedPartnerAvatar = avatar;
+  async function saveMomentsPartnerAvatar(avatar) {
+    if (!isValidAvatar(avatar) || avatar.startsWith('blob:')) return null;
+    let safeAvatar = avatar;
+    try {
+      safeAvatar = await persistMomentsImage('moments_partner_avatar', avatar, 512, 0.82) || avatar;
+    } catch(e) {
+      try { safeAvatar = await compressImage(avatar, 512, 0.82); } catch(e2) { safeAvatar = avatar; }
+    }
+    cachedPartnerAvatar = safeAvatar;
     try {
       const profileStr = typeof homeGetItem === 'function' ? homeGetItem('profile_partner') : localStorage.getItem('profile_partner');
       const profile = profileStr ? JSON.parse(profileStr) : {};
-      profile.avatar = avatar;
+      profile.avatar = safeAvatar;
       if (!isValidProfileValue(profile.name)) profile.name = getPartnerName();
-      if (typeof homeSetItem === 'function') {
-        homeSetItem('home_avatar_partner', avatar);
-        homeSetItem('profile_partner', JSON.stringify(profile));
-      } else {
-        localStorage.setItem('home_avatar_partner', avatar);
-        localStorage.setItem('profile_partner', JSON.stringify(profile));
-      }
-      if (window.settings) window.settings.partnerAvatar = avatar;
+      safeHomeSet('home_avatar_partner', safeAvatar);
+      safeHomeSet('profile_partner', JSON.stringify(profile));
+      await safeHomeSetLarge('home_avatar_partner', safeAvatar);
+      await safeHomeSetLarge('profile_partner', JSON.stringify(profile));
+      if (window.settings) window.settings.partnerAvatar = safeAvatar;
       if (typeof saveData === 'function') saveData();
-      window.dispatchEvent(new CustomEvent('homeGlobalUpdated', { detail: { key: 'home_avatar_partner', value: avatar } }));
+      window.dispatchEvent(new CustomEvent('homeGlobalUpdated', { detail: { key: 'home_avatar_partner', value: safeAvatar } }));
       window.dispatchEvent(new CustomEvent('homeGlobalUpdated', { detail: { key: 'profile_partner', value: JSON.stringify(profile) } }));
-    } catch(e) {}
+      return safeAvatar;
+    } catch(e) {
+      console.warn('保存对象头像失败:', e);
+      return safeAvatar;
+    }
   }
 
   function syncPartnerFriendItem() {
@@ -4381,9 +4444,16 @@
     try {
       // 先刷新伴侣信息缓存
       await loadPartnerInfo();
-      const data = momentsGet('moments_friends');
+      let data = null;
+      if (typeof localforage !== 'undefined') {
+        try {
+          data = await localforage.getItem(scopedMomentsKey('moments_friends'));
+          if (!data) data = await localforage.getItem('moments_friends');
+        } catch(e) {}
+      }
+      if (!data) data = momentsGet('moments_friends');
       if (data) {
-        momentsFriends = JSON.parse(data);
+        momentsFriends = Array.isArray(data) ? data : JSON.parse(data);
         // 更新伴侣信息为最新值
         var partnerIdx = momentsFriends.findIndex(function(f) { return f.isPartner; });
         if (partnerIdx >= 0) {
@@ -4392,11 +4462,11 @@
         } else {
           momentsFriends.unshift(getDefaultPartnerFriend()[0]);
         }
-        saveMomentsFriends();
+        await saveMomentsFriends();
       } else {
         // 默认包含伴侣
         momentsFriends = getDefaultPartnerFriend();
-        saveMomentsFriends();
+        await saveMomentsFriends();
       }
     } catch (e) {
       momentsFriends = getDefaultPartnerFriend();
@@ -4407,8 +4477,16 @@
     return [{ id: 'partner', name: getPartnerName(), avatar: getPartnerAvatar(), isPartner: true }];
   }
 
-  function saveMomentsFriends() {
-    momentsSet('moments_friends', JSON.stringify(momentsFriends));
+  async function saveMomentsFriends() {
+    const cleanList = Array.isArray(momentsFriends) ? momentsFriends : [];
+    if (typeof localforage !== 'undefined') {
+      try { await localforage.setItem(scopedMomentsKey('moments_friends'), cleanList); } catch(e) { console.warn('朋友圈对象列表 localforage 保存失败:', e); }
+    }
+    try {
+      momentsSet('moments_friends', JSON.stringify(cleanList));
+    } catch(e) {
+      console.warn('朋友圈对象列表 localStorage 保存失败，仅保留 localforage:', e);
+    }
   }
 
   function renderBeautifyFriendsList() {
@@ -4690,13 +4768,17 @@
     var file = e && e.target && e.target.files && e.target.files[0];
     if (!file || !file.type.startsWith('image/') || !editingFriendAvatarId) return;
     var reader = new FileReader();
-    reader.onload = function(ev) {
+    reader.onload = async function(ev) {
       var url = ev.target.result;
+      try { url = await compressImage(url, 512, 0.82); } catch(err) {}
       var item = momentsFriends.find(function(f) { return f.id === editingFriendAvatarId; });
       if (item) {
         item.avatar = url;
-        if (item.isPartner) saveMomentsPartnerAvatar(url);
-        saveMomentsFriends();
+        if (item.isPartner) {
+          const savedPartner = await saveMomentsPartnerAvatar(url);
+          if (savedPartner) item.avatar = savedPartner;
+        }
+        await saveMomentsFriends();
         renderBeautifyFriendsList();
       }
       editingFriendAvatarId = null;
@@ -4733,8 +4815,10 @@
     if (!file || !file.type.startsWith('image/')) return;
 
     const reader = new FileReader();
-    reader.onload = function(ev) {
-      const base64 = ev.target.result;
+    reader.onload = async function(ev) {
+      const rawBase64 = ev.target.result;
+      let base64 = rawBase64;
+      try { base64 = await compressImage(rawBase64, 512, 0.82); } catch(err) {}
       const container = document.getElementById('moments-container');
       if (container) {
         const preview = container.querySelector('#beautifyAvatarPreview');
@@ -4755,8 +4839,10 @@
     if (!file || !file.type.startsWith('image/')) return;
 
     const reader = new FileReader();
-    reader.onload = function(ev) {
-      const base64 = ev.target.result;
+    reader.onload = async function(ev) {
+      const rawBase64 = ev.target.result;
+      let base64 = rawBase64;
+      try { base64 = await compressImage(rawBase64, 512, 0.82); } catch(err) {}
       const container = document.getElementById('moments-container');
       if (container) {
         const preview = container.querySelector('#beautifyPartnerAvatarPreview');
@@ -4845,15 +4931,20 @@
         if (name) profile.name = userConfig.name;
         profile.identity = userConfig.identity;
         if (signature) profile.signature = userConfig.signature;
-        if (typeof homeSetItem === 'function') homeSetItem('profile_me', JSON.stringify(profile));
-        else localStorage.setItem('profile_me', JSON.stringify(profile));
+        if (profile.avatar && !isPersistentAvatar(profile.avatar)) delete profile.avatar;
+        safeHomeSet('profile_me', JSON.stringify(profile));
         window.dispatchEvent(new CustomEvent('homeGlobalUpdated', { detail: { key: 'profile_me', value: JSON.stringify(profile) } }));
       } catch(e) {}
       if (partnerName.trim()) {
         saveMomentsPartnerName(partnerName.trim());
       }
-      if (partnerAvatarPreview && isValidAvatar(partnerAvatarPreview.dataset.base64)) {
-        saveMomentsPartnerAvatar(partnerAvatarPreview.dataset.base64);
+      if (partnerAvatarPreview && partnerAvatarPreview.dataset.uploaded === '1' && isValidAvatar(partnerAvatarPreview.dataset.base64)) {
+        const savedPartner = await saveMomentsPartnerAvatar(partnerAvatarPreview.dataset.base64);
+        if (savedPartner) {
+          partnerAvatarPreview.src = savedPartner;
+          partnerAvatarPreview.dataset.base64 = savedPartner;
+          partnerAvatarPreview.dataset.uploaded = '0';
+        }
       }
       syncPartnerFriendItem();
       renderBeautifyFriendsList();
@@ -4862,8 +4953,8 @@
         const savedAvatar = await persistMomentsImage(MOMENTS_AVATAR_KEY, avatarPreview.dataset.base64, 512, 0.8);
         userConfig.avatar = savedAvatar || avatarPreview.dataset.base64;
         avatarChanged = true;
-        if (typeof homeSetItem === 'function') homeSetItem('home_avatar_me', userConfig.avatar);
-        else localStorage.setItem('home_avatar_me', userConfig.avatar);
+        safeHomeSet('home_avatar_me', userConfig.avatar);
+        await safeHomeSetLarge('home_avatar_me', userConfig.avatar);
         const profileStr = typeof homeGetItem === 'function' ? homeGetItem('profile_me') : localStorage.getItem('profile_me');
         try {
           const profile = profileStr ? JSON.parse(profileStr) : {};
@@ -4871,8 +4962,8 @@
           profile.identity = userConfig.identity;
           if (signature) profile.signature = userConfig.signature;
           profile.avatar = userConfig.avatar;
-          if (typeof homeSetItem === 'function') homeSetItem('profile_me', JSON.stringify(profile));
-          else localStorage.setItem('profile_me', JSON.stringify(profile));
+          safeHomeSet('profile_me', JSON.stringify(profile));
+          await safeHomeSetLarge('profile_me', JSON.stringify(profile));
           window.dispatchEvent(new CustomEvent('homeGlobalUpdated', { detail: { key: 'home_avatar_me', value: userConfig.avatar } }));
           window.dispatchEvent(new CustomEvent('homeGlobalUpdated', { detail: { key: 'profile_me', value: JSON.stringify(profile) } }));
         } catch(e) {}

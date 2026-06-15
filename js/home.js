@@ -83,6 +83,10 @@
     window.homeGetGlobal = homeGetGlobal;
     window.homeSetGlobal = homeSetGlobal;
     window.homeGetItem = homeGetItem;
+    window.homeSetItem = homeSetItem;
+    window.homeKey = homeKey;
+    window.homeGetLargeItem = homeGetLargeItem;
+    window.homeSetLargeItem = homeSetLargeItem;
 
     /** 删除全局 Home 设置（不受开关影响） */
     function homeRemoveGlobal(key) {
@@ -1464,7 +1468,8 @@
         // 强制显示在最上层：不要固定 99999，否则会被后续高层弹窗压住。
         const baseZ = 99999999;
         window.__modalTopZ = Math.max(baseZ, Number(window.__modalTopZ) || baseZ) + 2;
-        modalElement.style.cssText = 'display: flex !important; position: fixed !important; top: 0 !important; left: 0 !important; width: 100% !important; height: 100% !important; z-index: ' + window.__modalTopZ + ' !important; align-items: center !important; justify-content: center !important; background-color: rgba(0, 0, 0, 0.6) !important;';
+        modalElement.style.cssText = 'display: flex !important; position: fixed !important; top: 0 !important; left: 0 !important; width: 100% !important; height: 100% !important; align-items: center !important; justify-content: center !important; background-color: rgba(0, 0, 0, 0.6) !important;';
+        modalElement.style.setProperty('z-index', String(window.__modalTopZ), 'important');
         // 隐藏 header 和 input-area，彻底避免遮挡
         const header = document.querySelector('.header');
         if (header) header.style.visibility = 'hidden';
