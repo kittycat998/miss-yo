@@ -13,6 +13,15 @@
         return (n / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
+    function rpEscapeHtml(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     /** 生成唯一 ID */
     function genId() {
         return 'rp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
@@ -326,7 +335,7 @@
         }
 
         var overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center;';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:60000;display:flex;align-items:center;justify-content:center;';
         overlay.onclick = function (e) { if (e.target === overlay) overlay.remove(); };
 
         var isPending = record.status === 'pending';
@@ -342,6 +351,7 @@
         }
 
         var senderName = record.from === 'me' ? getMyName() : getPartnerName();
+        var safeSenderName = rpEscapeHtml(senderName);
 
         var panelBg = isOpened
             ? 'background:linear-gradient(180deg,#e0d8d8 0%,#ccc 100%);'
@@ -354,6 +364,7 @@
         var btnText = isPending ? '開' : (isReceived ? '已领取' : '已退回');
         var titleColor = isPending ? 'color:#ffd700;' : (isReturned ? 'color:#999;' : 'color:#ffd700;');
         var titleText = isReturned ? '已过期' : record.message;
+        var safeTitleText = rpEscapeHtml(titleText);
 
         // 判断是否为系统发出的红包（我方领取），添加退回按钮
         var isSystemSender = record.from === 'system';
@@ -370,8 +381,8 @@
                     '<div style="width:48px;height:48px;border-radius:50%;background:var(--accent-color,#b8a9c9);border:2px solid rgba(255,215,0,0.5);margin-bottom:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;">' +
                         (record.from === 'me' ? '<i class="fas fa-user"></i>' : '<i class="fas fa-heart"></i>') +
                     '</div>' +
-                    '<div style="font-size:13px;color:rgba(255,255,255,0.9);margin-bottom:6px;">' + senderName + ' 发来的红包</div>' +
-                    '<div style="font-size:18px;font-weight:700;' + titleColor + '">' + titleText + '</div>' +
+                    '<div style="font-size:13px;color:rgba(255,255,255,0.9);margin-bottom:6px;">' + safeSenderName + ' 发来的红包</div>' +
+                    '<div style="font-size:18px;font-weight:700;' + titleColor + '">' + safeTitleText + '</div>' +
                 '</div>' +
                 // 底部按钮区域
                 '<div style="padding:30px 20px 40px;display:flex;flex-direction:column;align-items:center;justify-content:center;' + (isOpened ? 'background:#ccc;' : 'background:#c4453c;') + '">' +
@@ -406,7 +417,7 @@
                             '<div style="width:48px;height:48px;border-radius:50%;background:#999;border:2px solid rgba(255,255,255,0.3);margin-bottom:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;">' +
                                 '<i class="fas fa-undo"></i>' +
                             '</div>' +
-                            '<div style="font-size:13px;color:rgba(255,255,255,0.9);margin-bottom:6px;">' + senderName + ' 发来的红包</div>' +
+                            '<div style="font-size:13px;color:rgba(255,255,255,0.9);margin-bottom:6px;">' + safeSenderName + ' 发来的红包</div>' +
                             '<div style="font-size:18px;font-weight:700;color:#999;">已退回</div>' +
                         '</div>' +
                         '<div style="padding:30px 20px 40px;display:flex;justify-content:center;background:#ccc;">' +
@@ -468,8 +479,8 @@
                         '<div style="width:48px;height:48px;border-radius:50%;background:var(--accent-color,#b8a9c9);border:2px solid rgba(255,215,0,0.5);margin-bottom:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;">' +
                             '<i class="fas fa-heart"></i>' +
                         '</div>' +
-                        '<div style="font-size:13px;color:rgba(255,255,255,0.9);margin-bottom:6px;">' + senderName + ' 发来的红包</div>' +
-                        '<div style="font-size:18px;font-weight:700;color:#ffd700;">' + record.message + '</div>' +
+                        '<div style="font-size:13px;color:rgba(255,255,255,0.9);margin-bottom:6px;">' + safeSenderName + ' 发来的红包</div>' +
+                        '<div style="font-size:18px;font-weight:700;color:#ffd700;">' + rpEscapeHtml(record.message) + '</div>' +
                         '<div style="font-size:24px;font-weight:700;color:#c4453c;margin-top:8px;">&yen;' + fmt(record.amount) + '</div>' +
                     '</div>' +
                     '<div style="padding:20px 20px 30px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#ccc;">' +
@@ -751,6 +762,9 @@
             }
         }
 
+        var safeMessage = rpEscapeHtml(message);
+        var safeRecordId = rpEscapeHtml(recordId);
+
         // 时间显示
         var timeStr = '';
         if (msg.timestamp) {
@@ -788,7 +802,7 @@
         var rpSvgCustom = '<svg width="36" height="44" viewBox="0 0 20 28" fill="none" ' + svgStroke + ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="16" height="18" rx="2"/><path d="M2 8l8 6 8-6"/><circle cx="10" cy="14" r="2.5" ' + svgCircleFill + ' stroke="none"/></svg>';
 
         var card =
-            '<div class="red-packet-card' + (isOpened ? ' opened' : '') + '" data-rp-id="' + recordId + '" style="width:260px;border-radius:6px;overflow:hidden;cursor:pointer;transition:transform 0.15s;position:relative;">' +
+            '<div class="red-packet-card' + (isOpened ? ' opened' : '') + '" data-rp-id="' + safeRecordId + '" style="width:260px;border-radius:6px;overflow:hidden;cursor:pointer;transition:transform 0.15s;position:relative;">' +
                 // 红色主体
                 '<div class="rp-body" style="' + bodyBg + 'padding:12px 14px 14px;color:#fff;position:relative;display:flex;align-items:center;gap:12px;">' +
                     // 红包袋图标
@@ -799,7 +813,7 @@
                     '<div class="rp-content" style="flex:1;min-width:0;">' +
                         '<div class="rp-title" style="font-size:13px;font-weight:600;margin-bottom:2px;">红包</div>' +
                         '<div class="rp-amount-text" style="font-size:24px;font-weight:700;line-height:1.2;"><span style="font-size:14px;font-weight:500;">&yen;</span>' + fmt(amount) + '</div>' +
-                        '<div class="rp-msg-text" style="font-size:11px;opacity:0.8;margin-top:2px;">' + message + '</div>' +
+                        '<div class="rp-msg-text" style="font-size:11px;opacity:0.8;margin-top:2px;">' + safeMessage + '</div>' +
                     '</div>' +
                 '</div>' +
                 // 底部白色区域

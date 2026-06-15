@@ -897,14 +897,125 @@
 }
 
 .moments-container .comment-item {
+  position: relative;
   padding: 3px 0;
   line-height: 1.5;
   font-size: 13px;
   cursor: pointer;
+  border-radius: 3px;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
-.moments-container .comment-item:active {
+.moments-container .comment-line {
+  word-break: break-word;
+}
+
+.moments-container .comment-item:active,
+.moments-container .comment-item.action-open {
   background: rgba(0, 0, 0, 0.05);
+}
+
+.moments-container .comment-action-popover {
+  display: none;
+  position: absolute;
+  right: 2px;
+  top: -34px;
+  z-index: 30;
+  align-items: center;
+  gap: 0;
+  padding: 4px;
+  border-radius: 8px;
+  background: rgba(38, 38, 38, 0.96);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  white-space: nowrap;
+}
+
+.moments-container .comment-action-popover.active {
+  display: flex;
+}
+
+.moments-container .comment-action-popover::after {
+  content: "";
+  position: absolute;
+  right: 16px;
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  background: rgba(38, 38, 38, 0.96);
+  transform: rotate(45deg);
+}
+
+.moments-container .comment-action-popover button {
+  position: relative;
+  z-index: 1;
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.moments-container .comment-action-popover button:active {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.moments-container .comment-action-popover button.danger {
+  color: #ff8f8f;
+}
+
+.moments-container .comment-editing {
+  padding: 7px;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.moments-container .comment-edit-title {
+  margin-bottom: 5px;
+}
+
+.moments-container .comment-edit-input {
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid #dde1e6;
+  border-radius: 8px;
+  padding: 7px 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  outline: none;
+  background: #fff;
+  color: #333;
+  font-family: inherit;
+}
+
+.moments-container .comment-edit-input:focus {
+  border-color: #576b95;
+}
+
+.moments-container .comment-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.moments-container .comment-edit-actions button {
+  border: 1px solid #d8dce2;
+  background: #fff;
+  color: #666;
+  border-radius: 14px;
+  padding: 4px 11px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.moments-container .comment-edit-actions button.primary {
+  border-color: #576b95;
+  background: #576b95;
+  color: #fff;
 }
 
 .moments-container .comment-item .comment-name {
@@ -3375,8 +3486,31 @@
   color: #e0e0e0;
 }
 
-.moments-container.dark-mode .comment-item:active {
+.moments-container.dark-mode .comment-item:active,
+.moments-container.dark-mode .comment-item.action-open {
   background: rgba(255, 255, 255, 0.05);
+}
+
+.moments-container.dark-mode .comment-editing {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.moments-container.dark-mode .comment-edit-input {
+  background: #252525;
+  border-color: #444;
+  color: #e0e0e0;
+}
+
+.moments-container.dark-mode .comment-edit-actions button {
+  background: #2b2b2b;
+  border-color: #444;
+  color: #ddd;
+}
+
+.moments-container.dark-mode .comment-edit-actions button.primary {
+  background: #8a9dc8;
+  border-color: #8a9dc8;
+  color: #151515;
 }
 
 .moments-container.dark-mode .action-btn .heart-icon {
@@ -4408,4 +4542,93 @@
 }
 .moments-container.dark-mode .visitor-panel {
     background: #1a1a1a;
+}
+
+
+/* ========== Inline Moment Comment Fix ==========
+   评论输入框改为跟随对应动态卡片展开，不再固定在屏幕底部，避免 iOS 键盘弹出时上方出现大块白屏。 */
+.moments-container .comment-inline-host {
+  padding-left: 52px;
+  margin-top: 6px;
+}
+
+.moments-container .comment-popup.comment-inline {
+  position: static;
+  left: auto;
+  bottom: auto;
+  width: auto;
+  z-index: auto;
+  padding: 8px;
+  padding-bottom: 8px;
+  border: 1px solid #e2e2e2;
+  border-radius: 10px;
+  background: #f7f7f7;
+  animation: none;
+  transition: none;
+  box-shadow: none;
+}
+
+.moments-container .comment-popup.comment-inline.active {
+  display: flex;
+  align-items: flex-start;
+}
+
+.moments-container .comment-popup.comment-inline .comment-input-area {
+  min-width: 0;
+}
+
+.moments-container .comment-popup.comment-inline .comment-input {
+  min-width: 0;
+  height: 34px;
+}
+
+.moments-container .comment-popup.comment-inline .send-btn {
+  height: 34px;
+  padding: 0 14px;
+}
+
+.moments-container .comment-emoji-panel.comment-inline {
+  position: static;
+  left: auto;
+  bottom: auto;
+  width: auto;
+  z-index: auto;
+  margin-top: 6px;
+  border: 1px solid #e5e5e5;
+  border-radius: 10px;
+  overflow: hidden;
+  animation: none;
+  padding-bottom: 0;
+  max-height: 220px;
+  background: #fff;
+}
+
+.moments-container .comment-emoji-panel.comment-inline.active {
+  display: flex;
+}
+
+.moments-container.dark-mode .comment-popup.comment-inline {
+  background: #252525;
+  border-color: #333;
+}
+
+.moments-container.dark-mode .comment-emoji-panel.comment-inline {
+  background: #2a2a2a;
+  border-color: #333;
+}
+
+@media (max-width: 420px) {
+  .moments-container .comment-inline-host {
+    padding-left: 44px;
+  }
+  .moments-container .comment-popup.comment-inline {
+    gap: 6px;
+    padding: 7px;
+  }
+  .moments-container .comment-popup.comment-inline .emoji-toggle-btn {
+    padding: 4px;
+  }
+  .moments-container .comment-popup.comment-inline .send-btn {
+    padding: 0 12px;
+  }
 }

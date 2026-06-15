@@ -3,6 +3,23 @@ let currentEnvTab = 'outbox';
 let editingEnvId = null; 
 let editingEnvSection = null; 
 
+function envEscapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function envLetterTime(letter, section) {
+    const raw = section === 'outbox'
+        ? (letter.sentTime || letter.timestamp || letter.createdAt)
+        : (letter.receivedTime || letter.timestamp || letter.sentTime || letter.createdAt);
+    const t = Number(raw);
+    return Number.isFinite(t) && t > 0 ? t : Date.now();
+}
+
 async function loadEnvelopeData() {
     const saved = await localforage.getItem(getStorageKey('envelopeData'));
     if (saved) envelopeData = saved;
@@ -176,14 +193,16 @@ function renderOutboxList() {
         return;
     }
     list.innerHTML = envelopeData.outbox.slice().reverse().map(letter => {
-        const date = new Date(letter.sentTime).toLocaleDateString('zh-CN', {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'});
+        const date = new Date(envLetterTime(letter, 'outbox')).toLocaleDateString('zh-CN', {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'});
         const isPending = letter.status === 'pending';
         const replyTime = isPending ? new Date(letter.replyTime).toLocaleDateString('zh-CN', {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '';
         const statusIcon = isPending
             ? `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`
             : `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>`;
         const statusText = isPending ? `${statusIcon} 预计 ${replyTime} 回信` : `${statusIcon} 已收到回信`;
-        const preview = letter.content.length > 38 ? letter.content.substring(0, 38) + '…' : letter.content;
+        const contentText = String(letter.content || '');
+        const preview = contentText.length > 38 ? contentText.substring(0, 38) + '…' : contentText;
+        const safePreview = envEscapeHtml(preview);
         return `
         <div class="env-letter-item" onclick="viewEnvLetter('outbox','${letter.id}')">
             <div class="env-letter-header">
@@ -196,7 +215,7 @@ function renderOutboxList() {
                 </div>
             </div>
             <div class="env-letter-body">
-                <div class="env-letter-preview">${preview}</div>
+                <div class="env-letter-preview">${safePreview}</div>
                 <div class="env-letter-status">${statusText}</div>
             </div>
             <button class="env-letter-delete-btn" onclick="deleteEnvLetter(event,'outbox','${letter.id}')">
@@ -218,10 +237,14 @@ function renderInboxList() {
         return;
     }
     list.innerHTML = envelopeData.inbox.slice().reverse().map(letter => {
-        const date = new Date(letter.receivedTime).toLocaleDateString('zh-CN', {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'});
-        const preview = letter.content.length > 50 ? letter.content.substring(0, 50) + '…' : letter.content;
+        const date = new Date(envLetterTime(letter, 'inbox')).toLocaleDateString('zh-CN', {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'});
+        const contentText = String(letter.content || '');
+        const preview = contentText.length > 50 ? contentText.substring(0, 50) + '…' : contentText;
+        const safePreview = envEscapeHtml(preview);
         const isNew = letter.isNew;
-        const origPreview = letter.originalContent ? (letter.originalContent.length > 32 ? letter.originalContent.substring(0, 32) + '…' : letter.originalContent) : '';
+        const originalText = String(letter.originalContent || '');
+        const origPreview = originalText ? (originalText.length > 32 ? originalText.substring(0, 32) + '…' : originalText) : '';
+        const safeOrigPreview = envEscapeHtml(origPreview);
         return `
         <div class="env-letter-item reply ${isNew ? 'env-letter-new' : ''}" onclick="viewEnvLetter('inbox','${letter.id}')">
             <div class="env-letter-header">
@@ -234,9 +257,9 @@ function renderInboxList() {
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.8)" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
                 </div>
             </div>
-            ${origPreview ? `<div style="padding:6px 12px 0;display:flex;align-items:flex-start;gap:6px;"><div style="width:2px;border-radius:2px;background:rgba(var(--accent-color-rgb),0.4);flex-shrink:0;align-self:stretch;min-height:14px;margin-top:1px;"></div><div style="font-size:11px;color:var(--text-secondary);font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:calc(100% - 14px);opacity:0.75;">原信: ${origPreview}</div></div>` : ''}
+            ${origPreview ? `<div style="padding:6px 12px 0;display:flex;align-items:flex-start;gap:6px;"><div style="width:2px;border-radius:2px;background:rgba(var(--accent-color-rgb),0.4);flex-shrink:0;align-self:stretch;min-height:14px;margin-top:1px;"></div><div style="font-size:11px;color:var(--text-secondary);font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:calc(100% - 14px);opacity:0.75;">原信: ${safeOrigPreview}</div></div>` : ''}
             <div class="env-letter-body">
-                <div class="env-letter-preview">${preview}</div>
+                <div class="env-letter-preview">${safePreview}</div>
             </div>
             <button class="env-letter-delete-btn" onclick="deleteEnvLetter(event,'inbox','${letter.id}')">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -259,7 +282,7 @@ window.viewEnvLetter = function(section, id) {
 
     document.getElementById('env-view-title').textContent = section === 'outbox' ? '寄出的信' : '收到的回信';
 
-    const dateObj = letter.timestamp ? new Date(letter.timestamp) : new Date();
+    const dateObj = new Date(envLetterTime(letter, section));
     const y = dateObj.getFullYear();
     const mo = String(dateObj.getMonth()+1).padStart(2,'0');
     const d = String(dateObj.getDate()).padStart(2,'0');
@@ -320,7 +343,15 @@ window.viewEnvLetter = function(section, id) {
             origCtx.style.display = 'none';
         }
     }
-    showModal(document.getElementById('envelope-view-modal'));
+    const viewModal = document.getElementById('envelope-view-modal');
+    showModal(viewModal);
+    // 信封列表本身也是弹窗；阅读层只比信封列表高一档，避免全站 z-index 军备竞赛。
+    if (viewModal) {
+        const topZ = 70030;
+        viewModal.style.zIndex = String(topZ);
+        const viewContent = viewModal.querySelector('.modal-content');
+        if (viewContent) viewContent.style.zIndex = String(topZ + 1);
+    }
 };
 
 window.toggleEnvEdit = function() {

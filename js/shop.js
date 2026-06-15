@@ -10,7 +10,8 @@
         orders: 'shop_orders',
         balance: 'shop_balance',
         searchHistory: 'shop_search_history',
-        giftCabinet: 'shop_gift_cabinet'
+        giftCabinet: 'shop_gift_cabinet',
+        autoBuySettings: 'shop_auto_buy_settings'
     };
 
     // 默认商品数据
@@ -116,7 +117,13 @@
         currentProduct: null,
         modalQty: 1,
         bookingMinutes: null,
-        addTagTarget: 'recommend'
+        addTagTarget: 'recommend',
+        autoBuySettings: {
+            enabled: true,
+            minSeconds: 10,
+            maxSeconds: 60,
+            probability: 30
+        }
     };
 
     // ========== IndexedDB 数据存储 ==========
@@ -202,6 +209,36 @@
         } catch(e) { return {}; }
     }
 
+    function normalizeAutoBuySettings(raw) {
+        const defaults = { enabled: true, minSeconds: 10, maxSeconds: 60, probability: 30 };
+        let cfg = Object.assign({}, defaults);
+        if (raw && typeof raw === 'object') cfg = Object.assign(cfg, raw);
+        cfg.enabled = cfg.enabled !== false;
+        cfg.minSeconds = Math.max(1, Math.round(Number(cfg.minSeconds) || defaults.minSeconds));
+        cfg.maxSeconds = Math.max(1, Math.round(Number(cfg.maxSeconds) || defaults.maxSeconds));
+        if (cfg.minSeconds > cfg.maxSeconds) {
+            const tmp = cfg.minSeconds;
+            cfg.minSeconds = cfg.maxSeconds;
+            cfg.maxSeconds = tmp;
+        }
+        cfg.probability = Math.min(100, Math.max(0, Math.round(Number(cfg.probability) || 0)));
+        return cfg;
+    }
+
+    function loadAutoBuySettings() {
+        try {
+            const raw = JSON.parse(localStorage.getItem(STORAGE_KEYS.autoBuySettings) || 'null');
+            state.autoBuySettings = normalizeAutoBuySettings(raw);
+        } catch (e) {
+            state.autoBuySettings = normalizeAutoBuySettings(null);
+        }
+    }
+
+    function saveAutoBuySettings() {
+        state.autoBuySettings = normalizeAutoBuySettings(state.autoBuySettings);
+        localStorage.setItem(STORAGE_KEYS.autoBuySettings, JSON.stringify(state.autoBuySettings));
+    }
+
     // ========== 数据持久化 ==========
     async function loadData() {
         let loadedProducts = null;
@@ -222,8 +259,10 @@
             // 小数据从 localStorage 读取
             state.balance = parseFloat(localStorage.getItem(STORAGE_KEYS.balance) || '520');
             state.searchHistory = JSON.parse(localStorage.getItem(STORAGE_KEYS.searchHistory) || '[]');
+            loadAutoBuySettings();
         } catch(e) {
             console.error('[Shop] loadData error:', e);
+            loadAutoBuySettings();
         }
 
         // 合并预设商品和已保存的商品（以id去重，保留用户数据）
@@ -265,6 +304,7 @@
         // 小数据存 localStorage（礼物柜同时存 localStorage 供 TA 的手机读取）
         localStorage.setItem(STORAGE_KEYS.balance, state.balance.toString());
         localStorage.setItem(STORAGE_KEYS.searchHistory, JSON.stringify(state.searchHistory));
+        saveAutoBuySettings();
         try {
             localStorage.setItem(STORAGE_KEYS.giftCabinet, JSON.stringify(state.giftCabinet));
         } catch (e) {
@@ -1196,18 +1236,30 @@
         }, 1500 + Math.random() * 2000);
     }
 
-    // 30% 概率自动从购物车购买（整个会话期间随机触发）
+    // 自动从购物车购买：检查间隔和概率可在商城标题设置里调整
     let autoBuyTimer = null;
+    function getAutoBuyDelay() {
+        const cfg = normalizeAutoBuySettings(state.autoBuySettings);
+        const min = cfg.minSeconds * 1000;
+        const max = cfg.maxSeconds * 1000;
+        return min + Math.random() * Math.max(0, max - min);
+    }
     function startAutoBuyTimer() {
         if (autoBuyTimer) return;
-        // 随机在 10~60 秒后检查一次
-        const delay = 10000 + Math.random() * 50000;
+        const cfg = normalizeAutoBuySettings(state.autoBuySettings);
+        state.autoBuySettings = cfg;
+        if (!cfg.enabled) return;
+        const delay = getAutoBuyDelay();
         autoBuyTimer = setTimeout(async () => {
             autoBuyTimer = null;
             await tryAutoBuyFromCart();
             // 继续下一轮
             startAutoBuyTimer();
         }, delay);
+    }
+    function restartAutoBuyTimer() {
+        stopAutoBuyTimer();
+        startAutoBuyTimer();
     }
     function stopAutoBuyTimer() {
         if (autoBuyTimer) {
@@ -1217,8 +1269,11 @@
     }
 
     async function tryAutoBuyFromCart() {
+        const cfg = normalizeAutoBuySettings(state.autoBuySettings);
+        state.autoBuySettings = cfg;
+        if (!cfg.enabled) return;
         if (state.cart.length === 0) return;
-        if (Math.random() > 0.3) return;
+        if (Math.random() * 100 >= cfg.probability) return;
 
         const item = state.cart[Math.floor(Math.random() * state.cart.length)];
         const product = state.products.find(p => p.id === item.productId);
@@ -1624,6 +1679,84 @@
         }
     }
 
+    // ========== 商城自动下单设置 ==========
+    function ensureShopSettingsModal() {
+        let modal = document.getElementById('shop-settings-modal');
+        if (modal) return modal;
+        modal = document.createElement('div');
+        modal.className = 'shop-modal shop-settings-modal';
+        modal.id = 'shop-settings-modal';
+        modal.innerHTML = `
+            <button class="shop-modal-close" onclick="window.ShopApp.closeSettingsModal()">✕</button>
+            <div class="shop-modal-content" style="padding:24px 20px;max-width:360px;">
+                <div style="font-size:1.1rem;font-weight:700;margin-bottom:6px;text-align:center;">⚙️ 商城设置</div>
+                <div style="font-size:0.78rem;color:var(--text-light);margin-bottom:18px;text-align:center;line-height:1.5;">设置他自动帮你从购物车下单的检查时间和触发概率</div>
+                <label style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;font-size:0.9rem;color:var(--text);">
+                    <span>自动下单</span>
+                    <input id="shop-auto-enabled" type="checkbox" style="width:20px;height:20px;accent-color:var(--accent-color,#ff4757);">
+                </label>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
+                    <label style="font-size:0.8rem;color:var(--text-light);">最短检查秒数
+                        <input id="shop-auto-min" type="number" min="1" step="1" style="width:100%;margin-top:6px;padding:10px;border:1px solid var(--border-color,#e0e0e0);border-radius:10px;background:var(--secondary-bg,#f5f5f5);color:var(--text);box-sizing:border-box;">
+                    </label>
+                    <label style="font-size:0.8rem;color:var(--text-light);">最长检查秒数
+                        <input id="shop-auto-max" type="number" min="1" step="1" style="width:100%;margin-top:6px;padding:10px;border:1px solid var(--border-color,#e0e0e0);border-radius:10px;background:var(--secondary-bg,#f5f5f5);color:var(--text);box-sizing:border-box;">
+                    </label>
+                </div>
+                <label style="font-size:0.8rem;color:var(--text-light);display:block;margin-bottom:16px;">触发概率（0-100%）
+                    <input id="shop-auto-probability" type="number" min="0" max="100" step="1" style="width:100%;margin-top:6px;padding:10px;border:1px solid var(--border-color,#e0e0e0);border-radius:10px;background:var(--secondary-bg,#f5f5f5);color:var(--text);box-sizing:border-box;">
+                </label>
+                <div id="shop-auto-settings-hint" style="font-size:0.75rem;color:var(--text-light);line-height:1.5;margin-bottom:14px;text-align:left;"></div>
+                <button class="buy-btn dream" onclick="window.ShopApp.saveSettings()" style="width:100%;">
+                    <i class="fas fa-check"></i> 保存设置
+                </button>
+            </div>`;
+        document.body.appendChild(modal);
+        return modal;
+    }
+
+    function fillShopSettingsModal() {
+        const cfg = normalizeAutoBuySettings(state.autoBuySettings);
+        state.autoBuySettings = cfg;
+        const enabled = document.getElementById('shop-auto-enabled');
+        const min = document.getElementById('shop-auto-min');
+        const max = document.getElementById('shop-auto-max');
+        const probability = document.getElementById('shop-auto-probability');
+        const hint = document.getElementById('shop-auto-settings-hint');
+        if (enabled) enabled.checked = cfg.enabled;
+        if (min) min.value = cfg.minSeconds;
+        if (max) max.value = cfg.maxSeconds;
+        if (probability) probability.value = cfg.probability;
+        if (hint) hint.textContent = `当前：每 ${cfg.minSeconds}-${cfg.maxSeconds} 秒检查一次，命中概率 ${cfg.probability}%。设成 0 就永远不会自动买，设成 100 就每次检查都买。`;
+    }
+
+    function showSettingsModal() {
+        const modal = ensureShopSettingsModal();
+        fillShopSettingsModal();
+        modal.classList.add('active');
+    }
+
+    function closeSettingsModal() {
+        const modal = document.getElementById('shop-settings-modal');
+        if (modal) modal.classList.remove('active');
+    }
+
+    async function saveSettings() {
+        const cfg = normalizeAutoBuySettings({
+            enabled: !!document.getElementById('shop-auto-enabled')?.checked,
+            minSeconds: document.getElementById('shop-auto-min')?.value,
+            maxSeconds: document.getElementById('shop-auto-max')?.value,
+            probability: document.getElementById('shop-auto-probability')?.value
+        });
+        state.autoBuySettings = cfg;
+        saveAutoBuySettings();
+        restartAutoBuyTimer();
+        closeSettingsModal();
+        if (typeof showNotification === 'function') {
+            showNotification(`商城设置已保存：${cfg.minSeconds}-${cfg.maxSeconds}秒 / ${cfg.probability}%`, 'success');
+        }
+    }
+
     // ========== 余额 ==========
     function showBalanceModal() {
         const topBalanceEl = document.getElementById('shop-balance-display');
@@ -1682,7 +1815,7 @@
             }
         });
 
-        // 启动自动购物车购买定时器（整个会话期间随机触发，30%概率）
+        // 启动自动购物车购买定时器（检查时间和概率由商城设置控制）
         startAutoBuyTimer();
     }
 
@@ -1727,6 +1860,9 @@
         showBalanceModal,
         closeBalanceModal,
         saveBalance,
+        showSettingsModal,
+        closeSettingsModal,
+        saveSettings,
         getGiftCabinet,
         handleWishImgUpload,
         addToCartFromModal,

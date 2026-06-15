@@ -83,17 +83,25 @@
         const root = document.documentElement;
         const inputHeight = inputWrapper ? Math.ceil(inputWrapper.getBoundingClientRect().height) : 64;
         const headerHeight = header ? Math.ceil(header.getBoundingClientRect().height) : 0;
-        const viewportHeight = Math.floor((window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0);
+        const layoutHeight = Math.floor(window.innerHeight || document.documentElement.clientHeight || 0);
+        const visualHeight = Math.floor((window.visualViewport && window.visualViewport.height) || layoutHeight || 0);
+        const appHeight = Math.max(layoutHeight, visualHeight, 320);
+
         root.style.setProperty('--chat-input-height', inputHeight + 'px');
         root.style.setProperty('--chat-header-height', headerHeight + 'px');
-        root.style.setProperty('--app-viewport-height', viewportHeight + 'px');
+        root.style.setProperty('--app-viewport-height', appHeight + 'px');
+        root.style.setProperty('--visual-viewport-height', Math.max(visualHeight, 320) + 'px');
+
         const chatArea = document.querySelector('.main-chat-area');
         if (chatArea) {
             chatArea.style.paddingBottom = inputHeight + 'px';
-            chatArea.style.height = Math.max(0, viewportHeight - headerHeight) + 'px';
+            chatArea.style.removeProperty('height');
         }
-        document.documentElement.style.height = viewportHeight + 'px';
-        document.body.style.height = viewportHeight + 'px';
+
+        // 不再强行改 html/body 的高度。iOS 键盘弹出时 visualViewport 会变小，
+        // 硬写 body 高度会把背景和主容器截短，造成输入框上方大块白。
+        document.documentElement.style.removeProperty('height');
+        document.body.style.removeProperty('height');
     }
 
     function initPageFit() {

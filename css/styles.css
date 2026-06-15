@@ -15021,3 +15021,70 @@ body::before{
 
 /* 红包弹窗需要盖过底部输入栏。 */
 .rp-overlay, .red-packet-overlay { z-index: 60000 !important; }
+
+
+/* Clean fix: 键盘/弹窗遮挡修复 */
+html,
+body{
+    width:100% !important;
+    min-height:100dvh !important;
+    overflow-x:hidden !important;
+}
+body{
+    min-height:var(--app-viewport-height, 100dvh) !important;
+}
+body::before{
+    height:var(--app-viewport-height, 100dvh) !important;
+    min-height:100dvh !important;
+}
+.main-chat-area{
+    height:calc(var(--visual-viewport-height, 100dvh) - var(--chat-header-height, 0px)) !important;
+    padding-bottom:calc(var(--chat-input-height, 64px) + env(safe-area-inset-bottom, 0px)) !important;
+}
+.modal{
+    z-index:70000 !important;
+}
+.modal-content{
+    z-index:70001 !important;
+}
+#chat-modal{
+    z-index:72000 !important;
+    align-items:center !important;
+    justify-content:center !important;
+    padding:calc(env(safe-area-inset-top, 0px) + 10px) 10px calc(env(safe-area-inset-bottom, 0px) + 10px) !important;
+    box-sizing:border-box !important;
+}
+#chat-modal .modal-content{
+    z-index:72001 !important;
+    width:min(96vw, 620px) !important;
+    max-height:calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 20px) !important;
+    margin:0 !important;
+    border-radius:24px !important;
+}
+#chat-modal .cs-panels{
+    min-height:0 !important;
+    overflow-y:auto !important;
+    -webkit-overflow-scrolling:touch !important;
+    padding-bottom:calc(28px + env(safe-area-inset-bottom, 0px)) !important;
+}
+#chat-modal .cs-panel{
+    padding-bottom:calc(22px + env(safe-area-inset-bottom, 0px)) !important;
+}
+.rp-overlay,
+.red-packet-overlay{
+    z-index:76000 !important;
+}
+
+/* clean3: 信封投递阅读弹窗必须盖在信封列表弹窗之上 */
+#envelope-modal {
+    z-index: 70020 !important;
+}
+#envelope-modal .modal-content {
+    z-index: 70021 !important;
+}
+#envelope-view-modal {
+    z-index: 70030 !important;
+}
+#envelope-view-modal .modal-content {
+    z-index: 70031 !important;
+}

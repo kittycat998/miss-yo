@@ -2737,17 +2737,25 @@ if (partnerPersonas && partnerPersonas.length > 0 && Math.random() < 0.3) {
         }
 
 function showModal(modalElement, focusElement = null) {
+            if (!modalElement) return;
             if (modalElement._hideTimeout) {
                 clearTimeout(modalElement._hideTimeout);
                 modalElement._hideTimeout = null;
             }
-            // 确保弹窗在 body 末尾（DOM 顺序影响同 z-index 的堆叠）
-            if (modalElement.parentElement !== document.body) {
+            // 每次打开都挪到 body 末尾；同级弹窗同 z-index 时，DOM 顺序会决定谁压谁。
+            if (document.body && modalElement.parentElement !== document.body) {
+                document.body.appendChild(modalElement);
+            } else if (document.body && document.body.lastElementChild !== modalElement) {
                 document.body.appendChild(modalElement);
             }
-            // 强制弹窗在最顶层
-            modalElement.style.zIndex = '99999999';
+            // 给后打开的弹窗更高层级，避免“子弹窗被父弹窗压在下面”。
+            const baseZ = 99999999;
+            window.__modalTopZ = Math.max(baseZ, Number(window.__modalTopZ) || baseZ) + 2;
+            modalElement.style.zIndex = String(window.__modalTopZ);
+            const immediateContent = modalElement.querySelector('.modal-content');
+            if (immediateContent) immediateContent.style.zIndex = String(window.__modalTopZ + 1);
             modalElement.style.display = 'flex';
+            document.body.classList.add('modal-open');
             // 隐藏 header 和 input-area，彻底避免遮挡
             const header = document.querySelector('.header');
             if (header) header.style.visibility = 'hidden';
@@ -2766,6 +2774,7 @@ function showModal(modalElement, focusElement = null) {
         }
 
         function hideModal(modalElement) {
+            if (!modalElement) return;
             const content = modalElement.querySelector('.modal-content');
             if (content) {
                 content.style.opacity = '0';
@@ -2775,12 +2784,20 @@ function showModal(modalElement, focusElement = null) {
             modalElement._hideTimeout = setTimeout(() => {
                 modalElement.style.display = 'none';
                 modalElement.style.zIndex = '';
-                // 恢复 header 和 input-area
-                const header = document.querySelector('.header');
-                if (header) header.style.visibility = '';
-                const inputArea = document.querySelector('.input-area-wrapper');
-                if (inputArea) inputArea.style.visibility = '';
-                document.body.classList.remove('modal-open');
+                if (content) content.style.zIndex = '';
+                const hasOpenModal = Array.from(document.querySelectorAll('.modal')).some(m => {
+                    if (m === modalElement) return false;
+                    const display = getComputedStyle(m).display;
+                    return display !== 'none';
+                });
+                // 只有最后一个弹窗关闭时才恢复 header 和 input-area，避免多层弹窗互相误恢复。
+                if (!hasOpenModal) {
+                    const header = document.querySelector('.header');
+                    if (header) header.style.visibility = '';
+                    const inputArea = document.querySelector('.input-area-wrapper');
+                    if (inputArea) inputArea.style.visibility = '';
+                    document.body.classList.remove('modal-open');
+                }
             }, 300);
         }
 

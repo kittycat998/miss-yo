@@ -48,6 +48,23 @@
     }[s]));
   }
 
+  function escapeAttr(value) {
+    return escapeHtml(value);
+  }
+
+  function jsString(value) {
+    return JSON.stringify(String(value || ''))
+      .replace(/</g, '\\u003C')
+      .replace(/>/g, '\\u003E')
+      .replace(/&/g, '\\u0026')
+      .replace(/\u2028/g, '\\u2028')
+      .replace(/\u2029/g, '\\u2029');
+  }
+
+  function safeJsArg(value) {
+    return escapeAttr(jsString(value));
+  }
+
   function normalizeMomentUrl(value) {
     let url = String(value || '').trim();
     if (!url) return '';
@@ -240,6 +257,7 @@
       if (!Array.isArray(m.images)) m.images = [];
       if (!Array.isArray(m.likes)) m.likes = [];
       if (!Array.isArray(m.comments)) m.comments = [];
+      normalizeMomentComments(m);
       if (!Array.isArray(m.mentions)) m.mentions = [];
       list.push(m);
     });
@@ -312,6 +330,52 @@
 
   function pickRandom(arr) {
     return Array.isArray(arr) && arr.length ? arr[Math.floor(Math.random() * arr.length)] : null;
+  }
+
+  function createCommentId() {
+    return 'c_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+  }
+
+  function ensureCommentId(comment) {
+    if (!comment || typeof comment !== 'object') return comment;
+    if (!comment.id) comment.id = createCommentId();
+    return comment;
+  }
+
+  function normalizeMomentComments(moment) {
+    if (!moment || typeof moment !== 'object') return;
+    if (!Array.isArray(moment.comments)) moment.comments = [];
+    const seen = new Set();
+    moment.comments.forEach(function(comment) {
+      if (!comment || typeof comment !== 'object') return;
+      if (!comment.id || seen.has(String(comment.id))) comment.id = createCommentId();
+      seen.add(String(comment.id));
+    });
+  }
+
+  function findCommentById(moment, commentId) {
+    if (!moment || !Array.isArray(moment.comments)) return null;
+    const wanted = String(commentId || '');
+    return moment.comments.find(function(comment) {
+      return comment && String(comment.id || '') === wanted;
+    }) || null;
+  }
+
+  function findCommentIndex(moment, commentId) {
+    if (!moment || !Array.isArray(moment.comments)) return -1;
+    const wanted = String(commentId || '');
+    return moment.comments.findIndex(function(comment) {
+      return comment && String(comment.id || '') === wanted;
+    });
+  }
+
+  function getCommentActionKey(momentId, commentId) {
+    return String(momentId) + ':' + String(commentId || '');
+  }
+
+  function cssEscape(value) {
+    if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(String(value));
+    return String(value).replace(/[^a-zA-Z0-9_-]/g, function(ch) { return '\\' + ch; });
   }
 
   function getTextPool() {
@@ -519,6 +583,7 @@
       const dataToSave = [];
       for (let mi = 0; mi < momentsData.length; mi++) {
         const m = momentsData[mi];
+        normalizeMomentComments(m);
         const saved = { ...m, images: [...m.images] };
 
         // 视频处理：大视频存 IndexedDB
@@ -767,9 +832,10 @@
     // 从 IndexedDB 恢复大图片（异步加载）
     await restoreImagesFromIDB();
 
+    // 朋友圈列表重绘前，先把内联评论框移回根容器，避免 innerHTML 清空时把输入框节点一起删掉。
+    restoreInlineCommentControls();
     listEl.innerHTML = momentsData.map(m => renderMomentCard(m)).join('');
     setupLongPress();
-    setupCardLongPress();
 
     // 渲染后重新显示通知（renderMoments 重建 DOM 会销毁通知元素）
     if (momentsNotifications.length > 0) {
@@ -835,15 +901,24 @@
     return `${month}月${day}日`;
   }
 
+  let editingCommentMomentId = null;
+  let editingCommentId = null;
+
   function renderMomentCard(m) {
     if (!Array.isArray(m.images)) m.images = [];
     if (!Array.isArray(m.likes)) m.likes = [];
     if (!Array.isArray(m.comments)) m.comments = [];
+    normalizeMomentComments(m);
     if (!Array.isArray(m.mentions)) m.mentions = [];
     const displayAvatar = isValidAvatar(m.avatar) ? m.avatar : userConfig.avatar;
     const displayNickname = isValidProfileValue(m.nickname) ? m.nickname : userConfig.name;
     const displayIdentity = isValidProfileValue(m.identity) ? m.identity : '';
     const displayText = isValidProfileValue(m.text) ? m.text : '';
+    const safeNickname = escapeHtml(displayNickname);
+    const safeAvatar = escapeAttr(displayAvatar);
+    const safeText = escapeHtml(displayText);
+    const momentId = Number(m.id) || 0;
+
     // 计算媒体总数（图片+视频）
     const mediaItems = [];
     m.images.forEach((img, i) => mediaItems.push({ type: 'image', src: img, index: i }));
@@ -855,18 +930,19 @@
 
     const imagesHtml = totalMedia > 0 ? `
       <div class="nine-grid ${gridClass}">
-        ${mediaItems.map((item, i) => {
+        ${mediaItems.map((item) => {
+          const safeSrc = escapeAttr(item.src || '');
           if (item.type === 'video') {
             return `
-              <div class="grid-item video-item" onclick="MomentsApp.playVideo(${m.id})">
-                ${item.src ? `<img src="${item.src}" alt="视频" loading="lazy">` : `<div class="moment-video-placeholder"><i class="fas fa-play"></i></div>`}
-                <span class="video-duration">${item.duration || ''}</span>
+              <div class="grid-item video-item" onclick="MomentsApp.playVideo(${momentId})">
+                ${safeSrc ? `<img src="${safeSrc}" alt="视频" loading="lazy">` : `<div class="moment-video-placeholder"><i class="fas fa-play"></i></div>`}
+                <span class="video-duration">${escapeHtml(item.duration || '')}</span>
               </div>
             `;
           }
           return `
-            <div class="grid-item" onclick="MomentsApp.openPreview(${m.id}, ${item.index})">
-              <img src="${item.src}" alt="图片" loading="lazy">
+            <div class="grid-item" onclick="MomentsApp.openPreview(${momentId}, ${Number(item.index) || 0})">
+              <img src="${safeSrc}" alt="图片" loading="lazy">
             </div>
           `;
         }).join('')}
@@ -874,25 +950,52 @@
     ` : '';
 
     const stickerHtml = m.sticker ? `
-      <div class="moment-sticker" onclick="MomentsApp.openStickerPreview('${m.sticker}')">
-        <img src="${m.sticker}" alt="表情包" loading="lazy">
+      <div class="moment-sticker" onclick="MomentsApp.openStickerPreview(${safeJsArg(m.sticker)})">
+        <img src="${escapeAttr(m.sticker)}" alt="表情包" loading="lazy">
       </div>
     ` : '';
 
     const likesHtml = m.likes.length > 0 ? `
       <div class="like-section">
         <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
-        <span class="like-names">${m.likes.join('，')}</span>
+        <span class="like-names">${m.likes.map(name => escapeHtml(name)).join('，')}</span>
       </div>
     ` : '';
 
     const commentsHtml = m.comments.length > 0 ? `
       <div class="comment-section">
-        ${m.comments.map((c, idx) => `
-          <div class="comment-item" onclick="MomentsApp.replyToComment(${m.id}, ${idx}, '${c.name}')">
-            <span class="comment-name">${c.name}</span>${c.replyTo ? `<span class="reply-arrow">回复</span><span class="reply-to">${c.replyTo}</span>` : ''}：<span class="comment-text">${c.text}</span>${c.sticker ? `<img class="comment-sticker-img" src="${c.sticker}" alt="表情包" style="max-width:80px;max-height:80px;border-radius:4px;vertical-align:middle;display:inline-block;margin-left:4px;">` : ''}
-          </div>
-        `).join('')}
+        ${m.comments.map((c) => {
+          ensureCommentId(c);
+          const commentId = String(c && c.id ? c.id : createCommentId());
+          const commentName = c && c.name ? c.name : '';
+          const replyTo = c && c.replyTo ? c.replyTo : '';
+          const commentText = c && c.text ? c.text : '';
+          const sticker = c && c.sticker ? c.sticker : '';
+          const actionKey = getCommentActionKey(momentId, commentId);
+          const isEditingComment = editingCommentMomentId === momentId && editingCommentId === commentId;
+          if (isEditingComment) {
+            return `
+              <div class="comment-item comment-editing" data-comment-item data-moment-id="${momentId}" data-comment-id="${escapeAttr(commentId)}" onclick="event.stopPropagation()">
+                <div class="comment-edit-title"><span class="comment-name">${escapeHtml(commentName)}</span>${replyTo ? `<span class="reply-arrow">回复</span><span class="reply-to">${escapeHtml(replyTo)}</span>` : ''}</div>
+                <textarea class="comment-edit-input" data-comment-edit-input="${escapeAttr(actionKey)}">${escapeHtml(commentText)}</textarea>
+                <div class="comment-edit-actions">
+                  <button type="button" onclick="event.stopPropagation();MomentsApp.cancelCommentEdit()">取消</button>
+                  <button type="button" class="primary" onclick="event.stopPropagation();MomentsApp.saveCommentEdit(${momentId}, ${safeJsArg(commentId)})">保存</button>
+                </div>
+              </div>
+            `;
+          }
+          return `
+            <div class="comment-item" data-comment-item data-moment-id="${momentId}" data-comment-id="${escapeAttr(commentId)}" data-comment-name="${escapeAttr(commentName)}">
+              <div class="comment-line"><span class="comment-name">${escapeHtml(commentName)}</span>${replyTo ? `<span class="reply-arrow">回复</span><span class="reply-to">${escapeHtml(replyTo)}</span>` : ''}：<span class="comment-text">${escapeHtml(commentText)}</span>${sticker ? `<img class="comment-sticker-img" src="${escapeAttr(sticker)}" alt="表情包" style="max-width:80px;max-height:80px;border-radius:4px;vertical-align:middle;display:inline-block;margin-left:4px;">` : ''}</div>
+              <div class="comment-action-popover" data-comment-menu="${escapeAttr(actionKey)}" onclick="event.stopPropagation()">
+                <button type="button" onclick="event.stopPropagation();MomentsApp.closeCommentActionMenus();MomentsApp.replyToComment(${momentId}, ${safeJsArg(commentId)})">回复</button>
+                <button type="button" onclick="event.stopPropagation();MomentsApp.closeCommentActionMenus();MomentsApp.editComment(${momentId}, ${safeJsArg(commentId)})">编辑</button>
+                <button type="button" class="danger" onclick="event.stopPropagation();MomentsApp.closeCommentActionMenus();MomentsApp.deleteComment(${momentId}, ${safeJsArg(commentId)})">删除</button>
+              </div>
+            </div>
+          `;
+        }).join('')}
       </div>
     ` : '';
 
@@ -909,35 +1012,35 @@
     const collectedClass = m.collected ? 'collected' : '';
 
     const mentionsHtml = m.mentions && m.mentions.length > 0 ? `
-      <div class="moment-mentions">提到了：${m.mentions.join('、')}</div>
+      <div class="moment-mentions">提到了：${m.mentions.map(name => escapeHtml(name)).join('、')}</div>
     ` : '';
 
     const locationHtml = m.location ? `
-      <div class="moment-location">${m.location}</div>
+      <div class="moment-location">${escapeHtml(m.location)}</div>
     ` : '';
 
     const linkHtml = m.link && m.link.url ? renderMomentLink(m) : '';
     const voiceHtml = m.voice && m.voice.url ? renderMomentVoice(m) : '';
 
     return `
-      <div class="moment-card" data-moment-id="${m.id}">
-        <div class="moment-notification" id="momentNotification-${m.id}" style="display:none;">
+      <div class="moment-card" data-moment-id="${momentId}">
+        <div class="moment-notification" id="momentNotification-${momentId}" style="display:none;">
           <div class="moment-notification-inner" onclick="MomentsApp.scrollToFirstNotifiedMoment && MomentsApp.scrollToFirstNotifiedMoment()">
             <img class="notification-avatar" src="" alt="">
             <span class="notification-text"></span>
           </div>
         </div>
         <div class="moment-header">
-          <img class="moment-avatar" src="${displayAvatar}" alt="${displayNickname}">
+          <img class="moment-avatar" src="${safeAvatar}" alt="${safeNickname}">
           <div class="moment-meta">
-            <div class="moment-nickname">${displayNickname}</div>
+            <div class="moment-nickname">${safeNickname}</div>
             ${displayIdentity ? `<div class="moment-identity">${escapeHtml(displayIdentity)}</div>` : ''}
-            <div class="moment-time">${formatMomentTime(m.time)}</div>
+            <div class="moment-time">${escapeHtml(formatMomentTime(m.time))}</div>
           </div>
         </div>
         <div class="moment-content">
-          <div class="moment-text ${displayText.length > 80 ? 'collapsed' : ''}" id="mt-${m.id}">${displayText}</div>
-          ${displayText.length > 80 ? `<div class="moment-text-expand" onclick="MomentsApp.toggleTextExpand(${m.id})">展开</div>` : ''}
+          <div class="moment-text ${displayText.length > 80 ? 'collapsed' : ''}" id="mt-${momentId}">${safeText}</div>
+          ${displayText.length > 80 ? `<div class="moment-text-expand" onclick="MomentsApp.toggleTextExpand(${momentId})">展开</div>` : ''}
           ${mentionsHtml}
           ${locationHtml}
           ${linkHtml}
@@ -947,25 +1050,26 @@
         </div>
         <div class="moment-actions">
           <div class="moment-more-wrapper">
-            <button class="action-btn moment-more-btn" type="button" data-more-btn="${m.id}" onclick="MomentsApp.toggleMomentManageMenu(${m.id}, event)" title="更多操作">
+            <button class="action-btn moment-more-btn" type="button" data-more-btn="${momentId}" onclick="MomentsApp.toggleMomentManageMenu(${momentId}, event)" title="更多操作">
               <i class="fas fa-ellipsis-h"></i>
             </button>
-            <div class="moment-more-menu" data-more-menu="${m.id}">
-              <button type="button" onclick="event.stopPropagation();MomentsApp.closeMomentManageMenus();MomentsApp.openEditPanel(${m.id})"><i class="fas fa-pen"></i><span>编辑</span></button>
-              <button type="button" class="danger" onclick="event.stopPropagation();MomentsApp.closeMomentManageMenus();MomentsApp.deleteMomentById(${m.id})"><i class="fas fa-trash"></i><span>删除</span></button>
+            <div class="moment-more-menu" data-more-menu="${momentId}">
+              <button type="button" onclick="event.stopPropagation();MomentsApp.closeMomentManageMenus();MomentsApp.openEditPanel(${momentId})"><i class="fas fa-pen"></i><span>编辑</span></button>
+              <button type="button" class="danger" onclick="event.stopPropagation();MomentsApp.closeMomentManageMenus();MomentsApp.deleteMomentById(${momentId})"><i class="fas fa-trash"></i><span>删除</span></button>
             </div>
           </div>
-          <button class="action-btn ${likedClass}" data-like-btn="${m.id}">
+          <button class="action-btn ${likedClass}" data-like-btn="${momentId}">
             <svg class="heart-icon" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
           </button>
-          <button class="action-btn" data-comment-btn="${m.id}">
+          <button class="action-btn" data-comment-btn="${momentId}">
             <svg class="comment-icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10z"/></svg>
           </button>
-          <button class="action-btn ${collectedClass}" data-collect-btn="${m.id}">
+          <button class="action-btn ${collectedClass}" data-collect-btn="${momentId}">
             <svg class="star-icon" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
           </button>
         </div>
         ${interactionHtml}
+        <div class="comment-inline-host" data-comment-host="${momentId}"></div>
       </div>
     `;
   }
@@ -1016,35 +1120,9 @@
   }
 
   // ========== Card Long Press for Edit ==========
-  let cardLongPressTimer = null;
-
-  function setupCardLongPress() {
-    const container = document.getElementById('moments-container');
-    if (!container) return;
-    
-    container.querySelectorAll('.moment-card').forEach(card => {
-      card.addEventListener('touchstart', handleCardLongPressStart, { passive: true });
-      card.addEventListener('touchend', handleCardLongPressEnd);
-      card.addEventListener('mousedown', handleCardLongPressStart);
-      card.addEventListener('mouseup', handleCardLongPressEnd);
-      card.addEventListener('mouseleave', handleCardLongPressEnd);
-    });
-  }
-
-  function handleCardLongPressStart(e) {
-    const card = e.currentTarget;
-    cardLongPressTimer = setTimeout(() => {
-      const momentId = parseInt(card.dataset.momentId);
-      openEditPanel(momentId);
-    }, 800);
-  }
-
-  function handleCardLongPressEnd(e) {
-    if (cardLongPressTimer) {
-      clearTimeout(cardLongPressTimer);
-      cardLongPressTimer = null;
-    }
-  }
+  // 旧版长按整条朋友圈会打开编辑面板；编辑/删除已经移动到朋友圈右侧菜单，
+  // 这里不再绑定整卡长按，避免和“长按评论操作”抢事件。
+  function setupCardLongPress() {}
 
   // ========== Edit Panel ==========
   let currentEditMomentId = null;
@@ -1147,8 +1225,8 @@
     const container = document.getElementById('moments-container');
     if (!container) return;
 
-    const newText = container.querySelector('#editTextarea').value.trim();
-    if (newText) m.text = newText;
+    const editTextarea = container.querySelector('#editTextarea');
+    if (editTextarea) m.text = editTextarea.value.trim();
     m.images = [...editImages];
 
     // 保存位置和提到的人
@@ -1256,6 +1334,29 @@
         if (!e.target.closest('.moment-more-wrapper')) {
           closeMomentManageMenus();
         }
+        if (!e.target.closest('.comment-action-popover') && !e.target.closest('[data-comment-item]')) {
+          closeCommentActionMenus();
+        }
+      });
+    });
+
+    container.querySelectorAll('[data-comment-item]').forEach(item => {
+      item.addEventListener('contextmenu', handleCommentItemContextMenu);
+      item.addEventListener('touchstart', handleCommentItemLongPressStart, { passive: false });
+      item.addEventListener('touchend', handleCommentItemLongPressEnd);
+      item.addEventListener('touchmove', handleCommentItemLongPressEnd);
+      item.addEventListener('mousedown', handleCommentItemLongPressStart);
+      item.addEventListener('mouseup', handleCommentItemLongPressEnd);
+      item.addEventListener('mouseleave', handleCommentItemLongPressEnd);
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('.comment-action-popover') || e.target.closest('.comment-edit-actions') || e.target.closest('.comment-edit-input')) return;
+        e.stopPropagation();
+        if (!item.dataset.longPressed) {
+          const momentId = parseInt(item.dataset.momentId);
+          const commentId = item.dataset.commentId;
+          replyToComment(momentId, commentId);
+        }
+        delete item.dataset.longPressed;
       });
     });
     
@@ -1331,6 +1432,134 @@
       clearTimeout(longPressTimer);
       longPressTimer = null;
     }
+  }
+
+  function handleCommentItemContextMenu(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const item = e.currentTarget;
+    openCommentActionMenu(parseInt(item.dataset.momentId), item.dataset.commentId, e);
+  }
+
+  function handleCommentItemLongPressStart(e) {
+    const item = e.currentTarget;
+    if (!item || item.classList.contains('comment-editing')) return;
+    if (e.target.closest('.comment-action-popover') || e.target.closest('.comment-edit-input') || e.target.closest('.comment-edit-actions')) return;
+    e.stopPropagation();
+    currentLongPressTarget = item;
+    longPressTimer = setTimeout(function() {
+      if (!currentLongPressTarget) return;
+      currentLongPressTarget.dataset.longPressed = 'true';
+      openCommentActionMenu(parseInt(currentLongPressTarget.dataset.momentId), currentLongPressTarget.dataset.commentId, e);
+    }, 650);
+  }
+
+  function handleCommentItemLongPressEnd(e) {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+  }
+
+  function closeCommentActionMenus() {
+    const container = document.getElementById('moments-container');
+    if (!container) return;
+    container.querySelectorAll('.comment-action-popover.active').forEach(function(menu) {
+      menu.classList.remove('active');
+    });
+    container.querySelectorAll('.comment-item.action-open').forEach(function(item) {
+      item.classList.remove('action-open');
+    });
+  }
+
+  function openCommentActionMenu(momentId, commentId, event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    const container = document.getElementById('moments-container');
+    if (!container || !commentId) return;
+    const key = getCommentActionKey(momentId, commentId);
+    const menu = Array.from(container.querySelectorAll('[data-comment-menu]')).find(function(el) {
+      return el.dataset.commentMenu === key;
+    });
+    const item = Array.from(container.querySelectorAll('[data-comment-item]')).find(function(el) {
+      return Number(el.dataset.momentId) === Number(momentId) && el.dataset.commentId === String(commentId);
+    });
+    if (!menu) return;
+    const shouldOpen = !menu.classList.contains('active');
+    closeCommentActionMenus();
+    if (shouldOpen) {
+      if (item) item.classList.add('action-open');
+      menu.classList.add('active');
+    }
+  }
+
+  function editComment(momentId, commentId) {
+    const m = momentsData.find(x => Number(x.id) === Number(momentId));
+    if (!m) return;
+    normalizeMomentComments(m);
+    const comment = findCommentById(m, commentId);
+    if (!comment) return;
+    editingCommentMomentId = Number(momentId);
+    editingCommentId = String(comment.id);
+    closeCommentActionMenus();
+    renderMoments();
+    setTimeout(function() {
+      const container = document.getElementById('moments-container');
+      if (!container) return;
+      const editKey = getCommentActionKey(momentId, commentId);
+      const input = Array.from(container.querySelectorAll('[data-comment-edit-input]')).find(function(el) {
+        return el.dataset.commentEditInput === editKey;
+      });
+      if (input) {
+        input.focus();
+        input.selectionStart = input.selectionEnd = input.value.length;
+      }
+    }, 50);
+  }
+
+  function cancelCommentEdit() {
+    editingCommentMomentId = null;
+    editingCommentId = null;
+    renderMoments();
+  }
+
+  async function saveCommentEdit(momentId, commentId) {
+    const container = document.getElementById('moments-container');
+    const editKey = getCommentActionKey(momentId, commentId);
+    const input = container ? Array.from(container.querySelectorAll('[data-comment-edit-input]')).find(function(el) {
+      return el.dataset.commentEditInput === editKey;
+    }) : null;
+    const newText = input ? input.value.trim() : '';
+    const m = momentsData.find(x => Number(x.id) === Number(momentId));
+    if (!m) return;
+    normalizeMomentComments(m);
+    const comment = findCommentById(m, commentId);
+    if (!comment) return;
+    comment.text = newText;
+    comment.editedAt = Date.now();
+    editingCommentMomentId = null;
+    editingCommentId = null;
+    await saveMomentsToStorage();
+    await renderMoments();
+  }
+
+  async function deleteComment(momentId, commentId) {
+    const m = momentsData.find(x => Number(x.id) === Number(momentId));
+    if (!m) return;
+    normalizeMomentComments(m);
+    const idx = findCommentIndex(m, commentId);
+    if (idx === -1) return;
+    if (!confirm('确定删除这条评论吗？')) return;
+    m.comments.splice(idx, 1);
+    if (editingCommentMomentId === Number(momentId) && editingCommentId === String(commentId)) {
+      editingCommentMomentId = null;
+      editingCommentId = null;
+    }
+    closeCommentActionMenus();
+    await saveMomentsToStorage();
+    await renderMoments();
   }
 
   function showLongPressHint() {
@@ -1490,7 +1719,7 @@
       const name = container.querySelector('#customInput').value.trim();
       const text = container.querySelector('#customCommentInput').value.trim();
       if (name && text) {
-        m.comments.push({ name, text });
+        m.comments.push({ id: createCommentId(), name, text });
       }
     }
     saveMomentsToStorage();
@@ -1607,6 +1836,7 @@
       if (sendSticker) {
         const sticker = stickerLibraryFiltered[Math.floor(Math.random() * stickerLibraryFiltered.length)];
         m.comments.push({
+          id: createCommentId(),
           name: replierName,
           text: '',
           sticker: sticker
@@ -1643,6 +1873,7 @@
       }
 
       m.comments.push({
+        id: createCommentId(),
         name: replierName,
         text: replyText
       });
@@ -1758,7 +1989,7 @@
 
     if (Math.random() < 0.35) {
       const selfComment = pickRandom(textPool) || '记录一下';
-      moment.comments.push({ name: author.name || getPartnerName(), text: selfComment });
+      moment.comments.push({ id: createCommentId(), name: author.name || getPartnerName(), text: selfComment });
     }
 
     momentsData.unshift(moment);
@@ -2324,16 +2555,18 @@
       panel.classList.add('active');
       toggleBtn.classList.add('active');
       renderCommentEmojiContent();
-      // 延迟调整评论输入框位置（等面板渲染完成）
+      // 内联评论框已经跟随动态卡片，不再用 fixed bottom 顶键盘，避免 iOS 输入时上方出现大白块。
       requestAnimationFrame(() => {
         const popup = container.querySelector('#commentPopup');
-        if (popup) popup.style.bottom = panel.offsetHeight + 'px';
+        if (popup && !popup.classList.contains('comment-inline')) {
+          popup.style.bottom = panel.offsetHeight + 'px';
+        }
       });
     } else {
       panel.classList.remove('active');
       toggleBtn.classList.remove('active');
       const popup = container.querySelector('#commentPopup');
-      if (popup) popup.style.bottom = '0';
+      if (popup && !popup.classList.contains('comment-inline')) popup.style.bottom = '0';
     }
   }
 
@@ -2345,7 +2578,7 @@
       const toggleBtn = container.querySelector('.emoji-toggle-btn');
       if (toggleBtn) toggleBtn.classList.remove('active');
       const popup = container.querySelector('#commentPopup');
-      if (popup) popup.style.bottom = '0';
+      if (popup && !popup.classList.contains('comment-inline')) popup.style.bottom = '0';
     }
   }
 
@@ -2398,7 +2631,7 @@
         body.innerHTML = '<div class="comment-emoji-empty">暂无表情包，请在表情包管理中添加</div>';
         return;
       }
-      items = stickerLibraryFiltered.map((s, i) => `<div class="comment-emoji-item sticker-item" onclick="MomentsApp.selectCommentSticker(${i})"><img src="${s}" alt="表情包"></div>`);
+      items = stickerLibraryFiltered.map((src, i) => `<div class="comment-emoji-item sticker-item" onclick="MomentsApp.selectCommentSticker(${i})"><img src="${escapeAttr(src)}" alt="表情包"></div>`);
     }
 
     body.innerHTML = items.join('');
@@ -2459,6 +2692,57 @@
     }
   }
 
+  // ========== Inline Comment Controls ==========
+  function restoreInlineCommentControls() {
+    const container = document.getElementById('moments-container');
+    if (!container) return;
+    const popup = document.getElementById('commentPopup');
+    const emojiPanel = document.getElementById('commentEmojiPanel');
+    if (popup && popup.parentElement !== container) container.appendChild(popup);
+    if (emojiPanel && emojiPanel.parentElement !== container) container.appendChild(emojiPanel);
+    if (popup) {
+      popup.classList.remove('comment-inline');
+      popup.style.bottom = '';
+    }
+    if (emojiPanel) {
+      emojiPanel.classList.remove('comment-inline');
+      emojiPanel.style.bottom = '';
+    }
+  }
+
+  function attachInlineCommentControls(momentId) {
+    const container = document.getElementById('moments-container');
+    if (!container) return null;
+    const popup = document.getElementById('commentPopup');
+    const emojiPanel = document.getElementById('commentEmojiPanel');
+    const host = container.querySelector(`[data-comment-host="${momentId}"]`);
+    if (!popup || !emojiPanel || !host) return null;
+
+    popup.classList.add('comment-inline');
+    emojiPanel.classList.add('comment-inline');
+    popup.style.bottom = '';
+    emojiPanel.style.bottom = '';
+    host.appendChild(popup);
+    host.appendChild(emojiPanel);
+    return { popup, emojiPanel, host };
+  }
+
+  function focusInlineCommentInput(input, host) {
+    if (!input) return;
+    requestAnimationFrame(() => {
+      if (host && typeof host.scrollIntoView === 'function') {
+        host.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      setTimeout(() => {
+        try {
+          input.focus({ preventScroll: true });
+        } catch (e) {
+          input.focus();
+        }
+      }, 80);
+    });
+  }
+
   // ========== Comment Toggle ==========
   let currentCommentMomentId = null;
   let replyToName = null;
@@ -2468,7 +2752,7 @@
     if (!container) return;
     
     const popup = container.querySelector('#commentPopup');
-    if (currentCommentMomentId === momentId && popup.classList.contains('active')) {
+    if (popup && currentCommentMomentId === momentId && popup.classList.contains('active')) {
       closeAllPanels();
     } else {
       openComment(momentId);
@@ -2483,42 +2767,60 @@
     
     const container = document.getElementById('moments-container');
     if (!container) return;
+    const mounted = attachInlineCommentControls(momentId);
+    if (!mounted) return;
+    const { popup, emojiPanel, host } = mounted;
+    const input = popup.querySelector('#commentInput');
     
-    const popup = container.querySelector('#commentPopup');
-    const input = container.querySelector('#commentInput');
-    // 重置输入框位置
-    popup.style.bottom = '0';
     popup.classList.add('active');
     input.value = '';
     input.placeholder = '写评论...';
-    input.focus();
     
     // 隐藏表情包预览
-    const stickerPreview = container.querySelector('#commentStickerPreview');
+    const stickerPreview = popup.querySelector('#commentStickerPreview');
     if (stickerPreview) {
       stickerPreview.classList.remove('active');
       stickerPreview.style.display = 'none';
-      stickerPreview.querySelector('img').src = '';
+      const img = stickerPreview.querySelector('img');
+      if (img) img.src = '';
     }
     // 关闭表情面板
-    container.querySelector('#commentEmojiPanel').classList.remove('active');
-    const toggleBtn = container.querySelector('.emoji-toggle-btn');
+    emojiPanel.classList.remove('active');
+    const toggleBtn = popup.querySelector('.emoji-toggle-btn');
     if (toggleBtn) toggleBtn.classList.remove('active');
+    focusInlineCommentInput(input, host);
   }
 
-  function replyToComment(momentId, commentIdx, name) {
-    currentCommentMomentId = momentId;
-    replyToName = name;
+  function replyToComment(momentId, commentRef, name) {
+    const m = momentsData.find(x => Number(x.id) === Number(momentId));
+    if (m) normalizeMomentComments(m);
+    let targetName = name || '';
+    if (m && !targetName) {
+      let targetComment = findCommentById(m, commentRef);
+      if (!targetComment && Number.isInteger(Number(commentRef))) {
+        targetComment = m.comments[Number(commentRef)];
+      }
+      targetName = targetComment && targetComment.name ? targetComment.name : '';
+    }
+    if (!targetName) targetName = 'TA';
+
+    currentCommentMomentId = Number(momentId);
+    replyToName = targetName;
+    pendingCommentSticker = null;
+    commentEmojiPanelOpen = false;
+    closeCommentActionMenus();
     
     const container = document.getElementById('moments-container');
     if (!container) return;
-    
-    const popup = container.querySelector('#commentPopup');
-    const input = container.querySelector('#commentInput');
+    const mounted = attachInlineCommentControls(momentId);
+    if (!mounted) return;
+    const { popup, emojiPanel, host } = mounted;
+    const input = popup.querySelector('#commentInput');
     popup.classList.add('active');
+    emojiPanel.classList.remove('active');
     input.value = '';
-    input.placeholder = `回复 ${name}：`;
-    input.focus();
+    input.placeholder = `回复 ${targetName}：`;
+    focusInlineCommentInput(input, host);
   }
 
   function submitComment() {
@@ -2536,6 +2838,7 @@
     if (m) {
       // 支持文字+表情包同时发送
       const userComment = {
+        id: createCommentId(),
         name: userConfig.name,
         text: text,
         sticker: pendingCommentSticker || undefined,
@@ -2543,13 +2846,19 @@
         time: Date.now()
       };
       m.comments.push(userComment);
+      const submittedMomentId = currentCommentMomentId;
       pendingCommentSticker = null;
       saveMomentsToStorage();
+      closeCommentEmojiPanel();
+      closeAllPanels();
+      restoreInlineCommentControls();
       renderMoments();
-      scheduleAutoReplyToUserComment(currentCommentMomentId, userComment);
+      scheduleAutoReplyToUserComment(submittedMomentId, userComment);
+      return;
     }
     closeCommentEmojiPanel();
     closeAllPanels();
+    restoreInlineCommentControls();
   }
 
   // ========== Search ==========
@@ -3934,8 +4243,12 @@
     
     container.querySelector('#mask').classList.remove('active');
     container.querySelector('#publishPanel').classList.remove('active');
-    container.querySelector('#commentPopup').classList.remove('active');
-    container.querySelector('#commentEmojiPanel').classList.remove('active');
+    const commentPopup = container.querySelector('#commentPopup');
+    const commentEmojiPanel = container.querySelector('#commentEmojiPanel');
+    if (commentPopup) commentPopup.classList.remove('active');
+    if (commentEmojiPanel) commentEmojiPanel.classList.remove('active');
+    commentEmojiPanelOpen = false;
+    currentCommentMomentId = null;
     container.querySelector('#publishStickerPanel').classList.remove('active');
     container.querySelector('#customPanel').classList.remove('active');
     container.querySelector('#mentionPanel').classList.remove('active');
@@ -3948,8 +4261,10 @@
     if (stickerPreview) {
       stickerPreview.classList.remove('active');
       stickerPreview.style.display = 'none';
-      stickerPreview.querySelector('img').src = '';
+      const stickerPreviewImg = stickerPreview.querySelector('img');
+      if (stickerPreviewImg) stickerPreviewImg.src = '';
     }
+    restoreInlineCommentControls();
     currentCommentMomentId = null;
     replyToName = null;
     currentEditMomentId = null;
@@ -4301,6 +4616,7 @@
       : momentAuthor;
     const shouldQuoteUser = isReplyingObject || Math.random() < 0.68;
     const partnerComment = {
+      id: createCommentId(),
       name: replyAuthor.name,
       text: buildPartnerCommentText(userComment),
       replyTo: shouldQuoteUser ? userComment.name : undefined,
@@ -4310,7 +4626,7 @@
     if (Math.random() < 0.35) {
       const extraText = buildPartnerCommentText(null);
       if (extraText && extraText !== partnerComment.text) {
-        m.comments.push({ name: replyAuthor.name, text: extraText, time: Date.now() + 1 });
+        m.comments.push({ id: createCommentId(), name: replyAuthor.name, text: extraText, time: Date.now() + 1 });
       }
     }
     saveMomentsToStorage();
@@ -4643,16 +4959,16 @@
         const offset = window.innerHeight - window.visualViewport.height;
         if (offset > 100) {
           // 虚拟键盘弹出
-          if (popup && popup.classList.contains('active')) {
+          if (popup && popup.classList.contains('active') && !popup.classList.contains('comment-inline')) {
             popup.style.bottom = offset + 'px';
           }
-          if (emojiPanel && emojiPanel.classList.contains('active')) {
+          if (emojiPanel && emojiPanel.classList.contains('active') && !emojiPanel.classList.contains('comment-inline')) {
             emojiPanel.style.bottom = offset + 'px';
           }
         } else {
-          // 虚拟键盘收起
-          if (popup) popup.style.bottom = '0';
-          if (emojiPanel) emojiPanel.style.bottom = '0';
+          // 虚拟键盘收起。内联评论框不使用 fixed bottom，避免 iOS 留白。
+          if (popup && !popup.classList.contains('comment-inline')) popup.style.bottom = '0';
+          if (emojiPanel && !emojiPanel.classList.contains('comment-inline')) emojiPanel.style.bottom = '0';
         }
       });
     }
@@ -4863,6 +5179,12 @@
     
     // 评论
     openComment,
+    editComment,
+    saveCommentEdit,
+    cancelCommentEdit,
+    deleteComment,
+    closeCommentActionMenus,
+    openCommentActionMenu,
     
     // 自定义
     openCustomLikePanel,

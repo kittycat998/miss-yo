@@ -26,6 +26,13 @@
             font-size: 1.1rem;
             font-weight: 700;
             color: var(--text, #1a1a1a);
+            cursor: pointer;
+            user-select: none;
+            padding: 4px 8px;
+            border-radius: 10px;
+        }
+        .shop-title:active {
+            background: var(--secondary-bg, #f5f5f5);
         }
         .shop-balance {
             display: flex;
