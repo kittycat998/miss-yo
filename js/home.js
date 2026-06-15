@@ -1461,8 +1461,10 @@
         if (modalElement.parentElement !== document.body) {
             document.body.appendChild(modalElement);
         }
-        // 强制显示在最上层
-        modalElement.style.cssText = 'display: flex !important; position: fixed !important; top: 0 !important; left: 0 !important; width: 100% !important; height: 100% !important; z-index: 99999 !important; align-items: center !important; justify-content: center !important; background-color: rgba(0, 0, 0, 0.6) !important;';
+        // 强制显示在最上层：不要固定 99999，否则会被后续高层弹窗压住。
+        const baseZ = 99999999;
+        window.__modalTopZ = Math.max(baseZ, Number(window.__modalTopZ) || baseZ) + 2;
+        modalElement.style.cssText = 'display: flex !important; position: fixed !important; top: 0 !important; left: 0 !important; width: 100% !important; height: 100% !important; z-index: ' + window.__modalTopZ + ' !important; align-items: center !important; justify-content: center !important; background-color: rgba(0, 0, 0, 0.6) !important;';
         // 隐藏 header 和 input-area，彻底避免遮挡
         const header = document.querySelector('.header');
         if (header) header.style.visibility = 'hidden';
@@ -1471,6 +1473,7 @@
         // 重置内容动画 - 先重置为初始状态，然后触发动画
         const content = modalElement.querySelector('.modal-content');
         if (content) {
+            content.style.setProperty('z-index', String((Number(window.__modalTopZ) || baseZ) + 1), 'important');
             // 先设置为初始状态（隐藏）
             content.style.opacity = '0';
             content.style.transform = 'translateY(20px) scale(0.95)';

@@ -253,7 +253,8 @@
         if (document.body && drawer.parentElement !== document.body) document.body.appendChild(drawer);
         else if (document.body && document.body.lastElementChild !== drawer) document.body.appendChild(drawer);
         var base = Math.max(100000400, Number(window.__modalTopZ) || 0);
-        drawer.style.zIndex = String(base + 20);
+        drawer.style.setProperty('z-index', String(base + 20), 'important');
+        window.__modalTopZ = Math.max(Number(window.__modalTopZ) || 0, base + 20);
         drawer.classList.add('open');
         document.body.style.overflow = 'hidden';
     }
@@ -261,7 +262,7 @@
         var drawer = document.getElementById(drawerId);
         if (!drawer) return;
         drawer.classList.remove('open');
-        drawer.style.zIndex = '';
+        drawer.style.removeProperty('z-index');
         document.body.style.overflow = '';
     }
 

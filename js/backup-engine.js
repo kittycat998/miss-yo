@@ -451,10 +451,16 @@
     function filterLfByCategories(lf, selectedIds, categories) {
         if (!selectedIds || !selectedIds.length) return {};
         var selected = categories.filter(function (c) { return selectedIds.indexOf(c.id) !== -1; });
+        var allNormal = categories.filter(function (c) { return !c.catchAll; });
+        var wantsCatchAll = selected.some(function (c) { return !!c.catchAll; });
         var out = {};
         for (var k in lf) {
             if (!Object.prototype.hasOwnProperty.call(lf, k)) continue;
-            var ok = selected.some(function (c) { return matchAnyNeedles(k, c.indexedDBNeedles); });
+            var ok = selected.some(function (c) { return !c.catchAll && matchAnyNeedles(k, c.indexedDBNeedles); });
+            if (!ok && wantsCatchAll) {
+                var matchedKnown = allNormal.some(function (c) { return matchAnyNeedles(k, c.indexedDBNeedles); });
+                ok = !matchedKnown;
+            }
             if (ok) out[k] = lf[k];
         }
         return out;
@@ -463,10 +469,16 @@
     function filterLsByCategories(ls, selectedIds, categories) {
         if (!selectedIds || !selectedIds.length) return {};
         var selected = categories.filter(function (c) { return selectedIds.indexOf(c.id) !== -1; });
+        var allNormal = categories.filter(function (c) { return !c.catchAll; });
+        var wantsCatchAll = selected.some(function (c) { return !!c.catchAll; });
         var out = {};
         for (var k in ls) {
             if (!Object.prototype.hasOwnProperty.call(ls, k)) continue;
-            var ok = selected.some(function (c) { return matchLsKey(k, c); });
+            var ok = selected.some(function (c) { return !c.catchAll && matchLsKey(k, c); });
+            if (!ok && wantsCatchAll) {
+                var matchedKnown = allNormal.some(function (c) { return matchLsKey(k, c); });
+                ok = !matchedKnown;
+            }
             if (ok) out[k] = ls[k];
         }
         return out;
@@ -511,7 +523,8 @@
             var targetLsKey = needRemap ? remapLfKey(k, backupSid, curSid, appPfx) : k;
             try {
                 var lsv = processLocalStorageValueForImport(lsRaw[k], mediaStore);
-                if (typeof lsv === 'string' && lsv.indexOf('data:image/') === 0 && lsv.length > 2000) continue;
+                // 不再跳过 localStorage 里的原始 data:image。音游头像/背景、主页卡片等旧模块会把图片直接存 localStorage；
+                // 这里跳过会造成“全量备份恢复后图片类新功能没带回来”。容量问题交给 setItem 的异常兜底处理。
                 localStorage.setItem(targetLsKey, lsv);
             } catch (e2) {
                 console.warn('[backup] localStorage 恢复失败', targetLsKey, e2);

@@ -2776,9 +2776,10 @@ function showModal(modalElement, focusElement = null) {
             // 给后打开的弹窗更高层级，避免“子弹窗被父弹窗压在下面”。
             const baseZ = 99999999;
             window.__modalTopZ = Math.max(baseZ, Number(window.__modalTopZ) || baseZ) + 2;
-            modalElement.style.zIndex = String(window.__modalTopZ);
+            // CSS 后面有 .modal { z-index: ... !important }，普通 inline zIndex 会被压掉；这里必须用 important。
+            modalElement.style.setProperty('z-index', String(window.__modalTopZ), 'important');
             const immediateContent = modalElement.querySelector('.modal-content');
-            if (immediateContent) immediateContent.style.zIndex = String(window.__modalTopZ + 1);
+            if (immediateContent) immediateContent.style.setProperty('z-index', String(window.__modalTopZ + 1), 'important');
             modalElement.style.display = 'flex';
             document.body.classList.add('modal-open');
             // 隐藏 header 和 input-area，彻底避免遮挡
@@ -2808,8 +2809,8 @@ function showModal(modalElement, focusElement = null) {
             if (modalElement._hideTimeout) clearTimeout(modalElement._hideTimeout);
             modalElement._hideTimeout = setTimeout(() => {
                 modalElement.style.display = 'none';
-                modalElement.style.zIndex = '';
-                if (content) content.style.zIndex = '';
+                modalElement.style.removeProperty('z-index');
+                if (content) content.style.removeProperty('z-index');
                 const hasOpenModal = Array.from(document.querySelectorAll('.modal')).some(m => {
                     if (m === modalElement) return false;
                     const display = getComputedStyle(m).display;

@@ -379,7 +379,17 @@ function applyGlobalThemeCss(cssCode) {
 
 async function exportAllData() {
     try {
-        if (typeof ChatBackup !== 'undefined' && ChatBackup.buildBackupPayload && ChatBackup.serializeBackupV4) {
+        if (typeof ChatBackup !== 'undefined' && ChatBackup.exportBackupToFile) {
+            await ChatBackup.exportBackupToFile({
+                inclMsgs: true,
+                inclSet: true,
+                inclCustom: true,
+                inclAnn: true,
+                inclThemes: true,
+                inclDg: true,
+                inclStickers: true
+            });
+        } else if (typeof ChatBackup !== 'undefined' && ChatBackup.buildBackupPayload && ChatBackup.serializeBackupV4) {
             const payload = await ChatBackup.buildBackupPayload({
                 inclMsgs: true,
                 inclSet: true,
@@ -434,19 +444,19 @@ async function importAllData(file) {
             {
                 id: 'chat',
                 label: '聊天记录 / 会话 / 红包',
-                indexedDBNeedles: ['chatMessages', 'sessionList', 'chatSettings', 'showPartnerNameInChat', 'envelopeData', 'pending_envelope'],
+                indexedDBNeedles: ['chatMessages', 'sessionList', 'chatSettings', 'showPartnerNameInChat', 'envelopeData', 'pending_envelope', 'transferData'],
                 localStorageNeedles: ['groupChatSettings']
             },
             {
                 id: 'replies',
                 label: '回复 / 拍一拍 / 氛围',
-                indexedDBNeedles: ['customReplies', 'customPokes', 'customStatuses', 'customMottos', 'customIntros', 'customEmojis', 'customReplyGroups', 'customPokeGroups', 'customStatusGroups'],
+                indexedDBNeedles: ['customReplies', 'customPokes', 'customStatuses', 'customMottos', 'customIntros', 'customEmojis', 'customReplyGroups', 'customPokeGroups', 'customStatusGroups', 'myPokes'],
                 localStorageNeedles: ['disabledReplyItems', 'pokeSym_my', 'pokeSym_partner', 'pokeSym_my_custom', 'pokeSym_partner_custom']
             },
             {
                 id: 'stickers',
                 label: '表情库（贴纸）',
-                indexedDBNeedles: ['stickerLibrary', 'myStickerLibrary'],
+                indexedDBNeedles: ['stickerLibrary', 'myStickerLibrary', 'customStickerGroups', 'kaomojiLibrary', 'kaomojiGroups'],
                 localStorageNeedles: ['disabledStickerItems']
             },
             {
@@ -473,15 +483,56 @@ async function importAllData(file) {
                 indexedDBNeedles: [],
                 localStorageNeedles: ['dg_custom_data', 'dg_status_pool', 'weekly_fortune', 'daily_fortune'],
                 localStoragePrefixes: ['customWeather_']
+            },
+            {
+                id: 'moments',
+                label: '朋友圈 / 相册 / 访客 / 草稿',
+                indexedDBNeedles: ['moments', 'momentsData', 'moments_lf', 'momentsMedia', 'momentsAlbum'],
+                localStorageNeedles: ['moments', 'visitorRecords', 'visitorLastOnline', 'visitorLastViewed', 'publishDraft', 'profile_me', 'profile_partner']
+            },
+            {
+                id: 'shop',
+                label: '商城 / 礼物柜 / 自动下单',
+                indexedDBNeedles: ['shop', 'giftCabinet'],
+                localStorageNeedles: ['shop_', 'ShopApp', 'giftCabinet', 'shopGiftCabinet', 'shopBalance', 'shopSearchHistory', 'shopAutoBuySettings']
+            },
+            {
+                id: 'media',
+                label: '媒体库 / 语音 / 视频 / 链接卡片 / 通话',
+                indexedDBNeedles: ['mediaLibrary', 'zcardMediaLibraryV1', 'customVoices', 'customVoiceGroups', 'voiceLibrary', 'videoLibrary', 'callBgImageData'],
+                localStorageNeedles: ['mediaLibrary', 'zcardMediaLibraryV1', 'zcardMediaLibraryMetaV1', 'partnerVoiceChance', 'partnerVideoChance', 'chat_video_bubble_width', 'chat_video_bubble_height', 'callFeatureEnabled', 'callWindowPos', 'callWindowSize', 'callPillPos']
+            },
+            {
+                id: 'tools',
+                label: '地图 / 记账 / 日记 / 摸鱼',
+                indexedDBNeedles: ['map', 'Map', 'accountingRecords', 'accountingLabels', 'diaryTodos', 'diaryHabits', 'diaryHabitRecords', 'diaryPeriodRecords', 'diaryAnniversaries', 'diaryTodoCategories', 'moyuRecords', 'moyuLocations', 'moyuActivities', 'currentMoyuRecord', 'moyuUnread', 'moyuWorkSession'],
+                localStorageNeedles: ['diaryPeriodLastReminderDate']
+            },
+            {
+                id: 'home_pet_music',
+                label: '首页 / 宠物 / 音游 / 小组件',
+                indexedDBNeedles: ['home_', 'profile_', 'playerCover', 'customSongs', 'spark', 'collections'],
+                localStorageNeedles: ['home_', 'pixelPetGame', 'chat_streak_data', 'ta_phone_collections', 'dailyFortuneNotes_', 'diviHistory_v1', 'home_session_bind', 'home_avatar_sync', 'home_bg_sync']
+            },
+            {
+                id: 'other',
+                label: '其他新增功能 / 未分类数据',
+                catchAll: true,
+                indexedDBNeedles: [],
+                localStorageNeedles: [],
+                localStoragePrefixes: []
             }
         ];
 
         const pickSelected = () => new Promise((resolve) => {
             const overlay = document.createElement('div');
+            const pickerZ = Math.max(100000700, Number(window.__modalTopZ) || 0) + 50;
             overlay.style.cssText = `
-                position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.6);
+                position:fixed;inset:0;background:rgba(0,0,0,0.6);
                 backdrop-filter:blur(10px);display:flex;align-items:flex-end;justify-content:center;
             `;
+            overlay.style.setProperty('z-index', String(pickerZ), 'important');
+            window.__modalTopZ = Math.max(Number(window.__modalTopZ) || 0, pickerZ);
             overlay.innerHTML = `
                 <div style="
                     width:100%;max-width:560px;background:var(--secondary-bg);border-radius:24px 24px 0 0;
