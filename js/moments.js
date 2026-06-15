@@ -4950,61 +4950,28 @@
   function setupVirtualKeyboardAdaptation() {
     const container = document.getElementById('moments-container');
     if (!container) return;
-
-    const updateKeyboardState = () => {
-      const popup = container.querySelector('#commentPopup');
-      const emojiPanel = container.querySelector('#commentEmojiPanel');
-      const publishPanel = container.querySelector('#publishPanel');
-      const viewport = window.visualViewport || null;
-      const layoutHeight = Math.floor(window.innerHeight || document.documentElement.clientHeight || 0);
-      const visualHeight = Math.floor((viewport && viewport.height) || layoutHeight || 0);
-      const visualOffsetTop = Math.floor((viewport && viewport.offsetTop) || 0);
-      const rawOffset = Math.max(0, layoutHeight - visualHeight - visualOffsetTop);
-      const active = document.activeElement;
-      const activeInMoments = !!(active && container.contains(active) && (active.matches('textarea, input[type="text"], input[type="search"], input[type="url"], input[type="number"], input:not([type]), [contenteditable="true"]')));
-      const keyboardOffset = (activeInMoments && rawOffset > 90) ? rawOffset : 0;
-      const publishEditing = !!(publishPanel && publishPanel.classList.contains('active') && active && publishPanel.contains(active) && keyboardOffset > 0);
-
-      document.documentElement.style.setProperty('--moments-visual-height', Math.max(visualHeight, 320) + 'px');
-      document.documentElement.style.setProperty('--moments-keyboard-offset', keyboardOffset + 'px');
-      container.classList.toggle('moments-keyboard-open', publishEditing);
-
-      if (keyboardOffset > 0) {
-        if (popup && popup.classList.contains('active') && !popup.classList.contains('comment-inline')) {
-          popup.style.bottom = keyboardOffset + 'px';
-        }
-        if (emojiPanel && emojiPanel.classList.contains('active') && !emojiPanel.classList.contains('comment-inline')) {
-          emojiPanel.style.bottom = keyboardOffset + 'px';
-        }
-      } else {
-        if (popup && !popup.classList.contains('comment-inline')) popup.style.bottom = '0';
-        if (emojiPanel && !emojiPanel.classList.contains('comment-inline')) emojiPanel.style.bottom = '0';
-      }
-
-      if (publishEditing) {
-        requestAnimationFrame(() => {
-          try {
-            window.scrollTo(0, 0);
-            container.scrollTop = 0;
-          } catch (e) {}
-        });
-      }
-    };
-
+    
+    const popup = container.querySelector('#commentPopup');
+    const emojiPanel = container.querySelector('#commentEmojiPanel');
+    
     if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', updateKeyboardState, { passive: true });
-      window.visualViewport.addEventListener('scroll', updateKeyboardState, { passive: true });
+      window.visualViewport.addEventListener('resize', () => {
+        const offset = window.innerHeight - window.visualViewport.height;
+        if (offset > 100) {
+          // 虚拟键盘弹出
+          if (popup && popup.classList.contains('active') && !popup.classList.contains('comment-inline')) {
+            popup.style.bottom = offset + 'px';
+          }
+          if (emojiPanel && emojiPanel.classList.contains('active') && !emojiPanel.classList.contains('comment-inline')) {
+            emojiPanel.style.bottom = offset + 'px';
+          }
+        } else {
+          // 虚拟键盘收起。内联评论框不使用 fixed bottom，避免 iOS 留白。
+          if (popup && !popup.classList.contains('comment-inline')) popup.style.bottom = '0';
+          if (emojiPanel && !emojiPanel.classList.contains('comment-inline')) emojiPanel.style.bottom = '0';
+        }
+      });
     }
-    window.addEventListener('resize', updateKeyboardState, { passive: true });
-    container.addEventListener('focusin', () => {
-      setTimeout(updateKeyboardState, 30);
-      setTimeout(updateKeyboardState, 180);
-    });
-    container.addEventListener('focusout', () => {
-      setTimeout(updateKeyboardState, 80);
-      setTimeout(updateKeyboardState, 260);
-    });
-    setTimeout(updateKeyboardState, 100);
   }
 
   // ========== Init ==========

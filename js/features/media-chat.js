@@ -84,37 +84,18 @@
         const inputHeight = inputWrapper ? Math.ceil(inputWrapper.getBoundingClientRect().height) : 64;
         const headerHeight = header ? Math.ceil(header.getBoundingClientRect().height) : 0;
         const layoutHeight = Math.floor(window.innerHeight || document.documentElement.clientHeight || 0);
-        const visualViewport = window.visualViewport || null;
-        const visualHeight = Math.floor((visualViewport && visualViewport.height) || layoutHeight || 0);
-        const visualOffsetTop = Math.floor((visualViewport && visualViewport.offsetTop) || 0);
-        const rawKeyboardOffset = Math.max(0, layoutHeight - visualHeight - visualOffsetTop);
-        const active = document.activeElement;
-        const isTextEditing = !!(active && (active.matches('textarea, input[type="text"], input[type="search"], input[type="number"], input[type="url"], input[type="email"], input:not([type]), [contenteditable="true"]')));
-        const isChatInput = !!(active && active.id === 'message-input');
-        const keyboardOffset = (isTextEditing && rawKeyboardOffset > 90) ? rawKeyboardOffset : 0;
+        const visualHeight = Math.floor((window.visualViewport && window.visualViewport.height) || layoutHeight || 0);
         const appHeight = Math.max(layoutHeight, visualHeight, 320);
 
         root.style.setProperty('--chat-input-height', inputHeight + 'px');
         root.style.setProperty('--chat-header-height', headerHeight + 'px');
         root.style.setProperty('--app-viewport-height', appHeight + 'px');
         root.style.setProperty('--visual-viewport-height', Math.max(visualHeight, 320) + 'px');
-        root.style.setProperty('--keyboard-offset', keyboardOffset + 'px');
 
         const chatArea = document.querySelector('.main-chat-area');
         if (chatArea) {
             chatArea.style.paddingBottom = inputHeight + 'px';
             chatArea.style.removeProperty('height');
-        }
-
-        document.body.classList.toggle('chat-keyboard-open', !!(isChatInput && keyboardOffset > 0));
-        if (isChatInput && keyboardOffset > 0) {
-            requestAnimationFrame(() => {
-                try {
-                    window.scrollTo(0, 0);
-                    document.documentElement.scrollTop = 0;
-                    document.body.scrollTop = 0;
-                } catch (e) {}
-            });
         }
 
         // 不再强行改 html/body 的高度。iOS 键盘弹出时 visualViewport 会变小，

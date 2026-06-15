@@ -400,7 +400,7 @@ const loadData = async () => {
         if (savedIntros) customIntros = savedIntros;
         else customIntros = CONSTANTS.WELCOME_ANIMATIONS.map(a => `${a.line1}|${a.line2}`);
 
-        if (savedMessages && Array.isArray(savedMessages)) {
+        if (savedMessages && Array.isArray(savedMessages) && savedMessages.length > 0) {
             messages = savedMessages.map(m => ({
                 ...m, timestamp: new Date(m.timestamp)
             }));
@@ -408,7 +408,7 @@ const loadData = async () => {
             const backup = _tryRecoverFromBackup();
             if (backup && Array.isArray(backup.messages) && backup.messages.length > 0) {
                 const timeSince = Math.round((Date.now() - backup.ts) / 60000);
-                console.warn(`[loadData] 主存储无消息，正在从备份恢复（备份时间：${timeSince} 分钟前）`);
+                console.warn(`[loadData] 主存储为空或无消息，正在从备份恢复（备份时间：${timeSince} 分钟前）`);
                 messages = backup.messages.map(m => ({
                     ...m, timestamp: new Date(m.timestamp)
                 }));
