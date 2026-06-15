@@ -12,6 +12,39 @@ function envEscapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+
+// clean7: 信封投递会从桌面入口和聊天设置入口打开，某些入口会给父弹窗写入较高的 inline !important z-index。
+// 阅读信件时必须用 inline !important 把阅读层重新抬到最上面，否则会被信封列表页/整个页面压住。
+function envSetModalLayer(modal, z) {
+    if (!modal) return;
+    try {
+        if (document.body && modal.parentElement !== document.body) {
+            document.body.appendChild(modal);
+        } else if (document.body && document.body.lastElementChild !== modal) {
+            document.body.appendChild(modal);
+        }
+        modal.style.setProperty('position', 'fixed', 'important');
+        modal.style.setProperty('inset', '0', 'important');
+        modal.style.setProperty('z-index', String(z), 'important');
+        const content = modal.querySelector('.modal-content');
+        if (content) {
+            content.style.setProperty('position', 'relative', 'important');
+            content.style.setProperty('z-index', String(z + 1), 'important');
+        }
+    } catch (e) {
+        console.warn('[Envelope] set modal layer failed:', e);
+    }
+}
+
+window.ensureEnvelopeModalStack = function() {
+    envSetModalLayer(document.getElementById('envelope-modal'), 2147483400);
+};
+
+window.ensureEnvelopeViewStack = function() {
+    envSetModalLayer(document.getElementById('envelope-modal'), 2147483400);
+    envSetModalLayer(document.getElementById('envelope-view-modal'), 2147483600);
+};
+
 function envLetterTime(letter, section) {
     const raw = section === 'outbox'
         ? (letter.sentTime || letter.timestamp || letter.createdAt)
@@ -344,13 +377,13 @@ window.viewEnvLetter = function(section, id) {
         }
     }
     const viewModal = document.getElementById('envelope-view-modal');
-    showModal(viewModal);
-    // 信封列表本身也是弹窗；阅读层只比信封列表高一档，避免全站 z-index 军备竞赛。
-    if (viewModal) {
-        const topZ = 70030;
-        viewModal.style.zIndex = String(topZ);
-        const viewContent = viewModal.querySelector('.modal-content');
-        if (viewContent) viewContent.style.zIndex = String(topZ + 1);
+    if (typeof showModal === 'function') {
+        showModal(viewModal);
+    } else if (viewModal) {
+        viewModal.style.display = 'flex';
+    }
+    if (typeof window.ensureEnvelopeViewStack === 'function') {
+        window.ensureEnvelopeViewStack();
     }
 };
 
@@ -389,7 +422,12 @@ window.saveEnvEdit = function() {
 };
 
 window.closeEnvViewModal = function() {
-    hideModal(document.getElementById('envelope-view-modal'));
+    const modal = document.getElementById('envelope-view-modal');
+    if (typeof hideModal === 'function') {
+        hideModal(modal);
+    } else if (modal) {
+        modal.style.display = 'none';
+    }
 };
 
 window.deleteEnvLetter = function(event, section, id) {

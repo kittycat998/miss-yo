@@ -1760,6 +1760,7 @@ if (envelopeReplyMaxSentencesSlider) {
             document.getElementById('env-main-close-btn').style.display = 'flex';
             renderEnvelopeLists();
             showModal(document.getElementById('envelope-modal'));
+            if (typeof window.ensureEnvelopeModalStack === 'function') window.ensureEnvelopeModalStack();
         });
     }
     const galleryBanner = document.getElementById('gallery-banner-entry');

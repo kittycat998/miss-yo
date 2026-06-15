@@ -15088,3 +15088,97 @@ body::before{
 #envelope-view-modal .modal-content {
     z-index: 70031 !important;
 }
+
+/* clean7: 信封列表和信件阅读层必须压过桌面/商城等页面层级；阅读层永远比列表层高 */
+#envelope-modal {
+    z-index: 2147483400 !important;
+}
+#envelope-modal > .modal-content,
+#envelope-modal .modal-content {
+    z-index: 2147483401 !important;
+}
+#envelope-view-modal {
+    z-index: 2147483600 !important;
+}
+#envelope-view-modal > .modal-content,
+#envelope-view-modal .modal-content {
+    z-index: 2147483601 !important;
+}
+
+/* clean8: iOS 键盘专修。输入框自己贴到键盘上方，不再让整个聊天页被浏览器顶走。 */
+:root {
+    --keyboard-offset: 0px;
+}
+body.chat-keyboard-open {
+    position: fixed !important;
+    inset: 0 !important;
+    overflow: hidden !important;
+}
+body.chat-keyboard-open .input-area-wrapper {
+    transform: translate3d(0, calc(-1 * var(--keyboard-offset, 0px)), 0) !important;
+    will-change: transform !important;
+}
+body:not(.chat-keyboard-open) .input-area-wrapper {
+    transform: translate3d(0, 0, 0) !important;
+}
+body.chat-keyboard-open .main-chat-area {
+    height: calc(var(--visual-viewport-height, 100dvh) - var(--chat-header-height, 0px)) !important;
+    padding-bottom: calc(var(--chat-input-height, 64px) + env(safe-area-inset-bottom, 0px)) !important;
+}
+body.chat-keyboard-open .chat-container,
+body.chat-keyboard-open #chat-container {
+    overscroll-behavior: contain !important;
+    -webkit-overflow-scrolling: touch !important;
+}
+
+/* clean8: 朋友圈发文键盘专修。输入时发布面板切到视口内，不再被 iOS 滚成一整片白。 */
+.moments-container.active {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: var(--moments-visual-height, 100dvh) !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain !important;
+    -webkit-overflow-scrolling: touch !important;
+}
+.moments-container .publish-panel {
+    max-height: min(70vh, var(--moments-visual-height, 100dvh)) !important;
+}
+.moments-container.moments-keyboard-open {
+    height: var(--moments-visual-height, 100dvh) !important;
+    overflow: hidden !important;
+}
+.moments-container.moments-keyboard-open .publish-panel {
+    top: 0 !important;
+    bottom: auto !important;
+    left: 0 !important;
+    right: 0 !important;
+    height: var(--moments-visual-height, 100dvh) !important;
+    max-height: var(--moments-visual-height, 100dvh) !important;
+    border-radius: 0 !important;
+    z-index: 2147481200 !important;
+}
+.moments-container.moments-keyboard-open .publish-header {
+    flex-shrink: 0 !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 2 !important;
+    background: #fff !important;
+    padding-top: calc(12px + env(safe-area-inset-top, 0px)) !important;
+}
+.moments-container.moments-keyboard-open .publish-body {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)) !important;
+}
+.moments-container.moments-keyboard-open .publish-textarea {
+    min-height: 150px !important;
+    max-height: none !important;
+    display: block !important;
+}
+.moments-container.dark-mode.moments-keyboard-open .publish-header {
+    background: #1c1c1e !important;
+}
