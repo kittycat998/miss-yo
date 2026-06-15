@@ -15075,18 +15075,16 @@ body::before{
     z-index:76000 !important;
 }
 
-/* 信封投递：阅读弹窗必须盖在信封列表弹窗之上；高于 homeShowModal 的 99999999，但不再用浏览器上限级 z-index。 */
+/* clean3: 信封投递阅读弹窗必须盖在信封列表弹窗之上 */
 #envelope-modal {
-    z-index: 100000000 !important;
+    z-index: 70020 !important;
 }
 #envelope-modal .modal-content {
-    z-index: 100000001 !important;
+    z-index: 70021 !important;
 }
 #envelope-view-modal {
-    z-index: 100000100 !important;
+    z-index: 70030 !important;
 }
 #envelope-view-modal .modal-content {
-    z-index: 100000101 !important;
+    z-index: 70031 !important;
 }
-
-

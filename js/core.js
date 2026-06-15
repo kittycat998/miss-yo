@@ -400,7 +400,7 @@ const loadData = async () => {
         if (savedIntros) customIntros = savedIntros;
         else customIntros = CONSTANTS.WELCOME_ANIMATIONS.map(a => `${a.line1}|${a.line2}`);
 
-        if (savedMessages && Array.isArray(savedMessages) && savedMessages.length > 0) {
+        if (savedMessages && Array.isArray(savedMessages)) {
             messages = savedMessages.map(m => ({
                 ...m, timestamp: new Date(m.timestamp)
             }));
@@ -408,7 +408,7 @@ const loadData = async () => {
             const backup = _tryRecoverFromBackup();
             if (backup && Array.isArray(backup.messages) && backup.messages.length > 0) {
                 const timeSince = Math.round((Date.now() - backup.ts) / 60000);
-                console.warn(`[loadData] 主存储为空或无消息，正在从备份恢复（备份时间：${timeSince} 分钟前）`);
+                console.warn(`[loadData] 主存储无消息，正在从备份恢复（备份时间：${timeSince} 分钟前）`);
                 messages = backup.messages.map(m => ({
                     ...m, timestamp: new Date(m.timestamp)
                 }));
@@ -601,17 +601,6 @@ const _BACKUP_PREFIX = 'BACKUP_V1_';
 function _backupCriticalData() {
     if (window._skipBackup) return;
     try {
-        // 保护旧备份：当前页面若已异常变成空消息，不要用空数组覆盖仍有内容的紧急备份。
-        if (!Array.isArray(messages) || messages.length === 0) {
-            try {
-                const oldRaw = localStorage.getItem(_BACKUP_PREFIX + 'critical');
-                const oldBackup = oldRaw ? JSON.parse(oldRaw) : null;
-                if (oldBackup && Array.isArray(oldBackup.messages) && oldBackup.messages.length > 0) {
-                    console.warn('[backup] 当前消息为空，保留已有紧急备份，避免二次覆盖');
-                    return;
-                }
-            } catch(_e) {}
-        }
         const backupPayload = {
             ts: Date.now(),
             messages: messages,
@@ -659,20 +648,6 @@ function _tryRecoverFromBackup() {
     }
 }
 
-async function _safeSetPreserveNonEmpty(baseKey, value) {
-    const fullKey = getStorageKey(baseKey);
-    if (Array.isArray(value) && value.length === 0) {
-        try {
-            const oldValue = await localforage.getItem(fullKey);
-            if (Array.isArray(oldValue) && oldValue.length > 0) {
-                console.warn('[saveData] 拦截空数组覆盖非空旧数据:', baseKey, oldValue.length);
-                return oldValue;
-            }
-        } catch(e) {}
-    }
-    return localforage.setItem(fullKey, value);
-}
-
 const saveData = async () => {
     if (!SESSION_ID) {
         console.warn('[saveData] SESSION_ID 尚未初始化，跳过保存以防数据写入临时 key');
@@ -681,16 +656,16 @@ const saveData = async () => {
 
     const promises = [
         { key: 'chatSettings',           val: () => localforage.setItem(getStorageKey('chatSettings'), settings) },
-        { key: 'customReplies',          val: () => _safeSetPreserveNonEmpty('customReplies', customReplies) },
-        { key: 'customReplyGroups',      val: () => _safeSetPreserveNonEmpty('customReplyGroups', window.customReplyGroups || []) },
-        { key: 'customPokeGroups',        val: () => _safeSetPreserveNonEmpty('customPokeGroups', window.customPokeGroups || []) },
-        { key: 'customStatusGroups',      val: () => _safeSetPreserveNonEmpty('customStatusGroups', window.customStatusGroups || []) },
-        { key: 'customEmojis',           val: () => _safeSetPreserveNonEmpty('customEmojis', customEmojis) },
-        { key: 'kaomojiGroups',           val: () => _safeSetPreserveNonEmpty('kaomojiGroups', window.kaomojiGroups || []) },
-        { key: 'customStickerGroups',     val: () => _safeSetPreserveNonEmpty('customStickerGroups', window.customStickerGroups || []) },
-        { key: 'customVoices',            val: () => _safeSetPreserveNonEmpty('customVoices', customVoices || []) },
-        { key: 'customVoiceGroups',       val: () => _safeSetPreserveNonEmpty('customVoiceGroups', window.customVoiceGroups || []) },
-        { key: 'kaomojiLibrary',          val: () => _safeSetPreserveNonEmpty('kaomojiLibrary', kaomojiLibrary || []) },
+        { key: 'customReplies',          val: () => localforage.setItem(getStorageKey('customReplies'), customReplies) },
+        { key: 'customReplyGroups',      val: () => localforage.setItem(getStorageKey('customReplyGroups'), window.customReplyGroups || []) },
+        { key: 'customPokeGroups',        val: () => localforage.setItem(getStorageKey('customPokeGroups'), window.customPokeGroups || []) },
+        { key: 'customStatusGroups',      val: () => localforage.setItem(getStorageKey('customStatusGroups'), window.customStatusGroups || []) },
+        { key: 'customEmojis',           val: () => localforage.setItem(getStorageKey('customEmojis'), customEmojis) },
+        { key: 'kaomojiGroups',           val: () => localforage.setItem(getStorageKey('kaomojiGroups'), window.kaomojiGroups || []) },
+        { key: 'customStickerGroups',     val: () => localforage.setItem(getStorageKey('customStickerGroups'), window.customStickerGroups || []) },
+        { key: 'customVoices',            val: () => localforage.setItem(getStorageKey('customVoices'), customVoices || []) },
+        { key: 'customVoiceGroups',       val: () => localforage.setItem(getStorageKey('customVoiceGroups'), window.customVoiceGroups || []) },
+        { key: 'kaomojiLibrary',          val: () => localforage.setItem(getStorageKey('kaomojiLibrary'), kaomojiLibrary || []) },
         { key: 'moyuRecords',             val: () => localforage.setItem(getStorageKey('moyuRecords'), moyuRecords || []) },
         { key: 'moyuLocations',           val: () => localforage.setItem(getStorageKey('moyuLocations'), moyuLocations || []) },
         { key: 'moyuActivities',          val: () => localforage.setItem(getStorageKey('moyuActivities'), window.moyuActivities || []) },
@@ -698,17 +673,17 @@ const saveData = async () => {
         { key: 'moyuUnread',              val: () => localforage.setItem(getStorageKey('moyuUnread'), moyuUnread || false) },
         { key: 'moyuWorkSession',         val: () => localforage.setItem(getStorageKey('moyuWorkSession'), window.moyuWorkSession || null) },
         { key: 'transferData',            val: () => localforage.setItem(getStorageKey('transferData'), transferData || null) },
-        { key: 'myPokes',                 val: () => _safeSetPreserveNonEmpty('myPokes', myPokes || []) },
-        { key: 'anniversaries',          val: () => _safeSetPreserveNonEmpty('anniversaries', anniversaries) },
-        { key: 'customPokes',            val: () => _safeSetPreserveNonEmpty('customPokes', customPokes) },
-        { key: 'customStatuses',         val: () => _safeSetPreserveNonEmpty('customStatuses', customStatuses) },
-        { key: 'customMottos',           val: () => _safeSetPreserveNonEmpty('customMottos', customMottos) },
-        { key: 'customIntros',           val: () => _safeSetPreserveNonEmpty('customIntros', customIntros) },
-        { key: 'stickerLibrary',         val: () => _safeSetPreserveNonEmpty('stickerLibrary', stickerLibrary) },
-        { key: 'myStickerLibrary',       val: () => _safeSetPreserveNonEmpty('myStickerLibrary', myStickerLibrary) },
+        { key: 'myPokes',                 val: () => localforage.setItem(getStorageKey('myPokes'), myPokes || []) },
+        { key: 'anniversaries',          val: () => localforage.setItem(getStorageKey('anniversaries'), anniversaries) },
+        { key: 'customPokes',            val: () => localforage.setItem(getStorageKey('customPokes'), customPokes) },
+        { key: 'customStatuses',         val: () => localforage.setItem(getStorageKey('customStatuses'), customStatuses) },
+        { key: 'customMottos',           val: () => localforage.setItem(getStorageKey('customMottos'), customMottos) },
+        { key: 'customIntros',           val: () => localforage.setItem(getStorageKey('customIntros'), customIntros) },
+        { key: 'stickerLibrary',         val: () => localforage.setItem(getStorageKey('stickerLibrary'), stickerLibrary) },
+        { key: 'myStickerLibrary',       val: () => localforage.setItem(getStorageKey('myStickerLibrary'), myStickerLibrary) },
         { key: 'customThemes',           val: () => localforage.setItem(`${APP_PREFIX}customThemes`, customThemes) },
         { key: 'themeSchemes',           val: () => localforage.setItem(`${APP_PREFIX}themeSchemes`, themeSchemes) },
-        { key: 'chatMessages',           val: () => _safeSetPreserveNonEmpty('chatMessages', messages) },
+        { key: 'chatMessages',           val: () => localforage.setItem(getStorageKey('chatMessages'), messages) },
     ];
 
     const partnerAvatarSrc = (() => {

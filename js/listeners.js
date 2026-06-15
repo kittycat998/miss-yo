@@ -1760,7 +1760,6 @@ if (envelopeReplyMaxSentencesSlider) {
             document.getElementById('env-main-close-btn').style.display = 'flex';
             renderEnvelopeLists();
             showModal(document.getElementById('envelope-modal'));
-            if (typeof window.ensureEnvelopeModalStack === 'function') window.ensureEnvelopeModalStack();
         });
     }
     const galleryBanner = document.getElementById('gallery-banner-entry');
@@ -1779,22 +1778,6 @@ const _cancelEnvEl = document.getElementById('cancel-envelope');
 if (_cancelEnvEl) _cancelEnvEl.addEventListener('click', () => {
     hideModal(document.getElementById('envelope-modal'));
 });
-
-// 定时发送复选框事件监听
-const _scheduleSendCheckbox = document.getElementById('env-schedule-send');
-const _scheduleTimeContainer = document.getElementById('env-schedule-time-container');
-const _scheduleTimeInput = document.getElementById('env-schedule-time');
-if (_scheduleSendCheckbox && _scheduleTimeContainer) {
-    _scheduleSendCheckbox.addEventListener('change', () => {
-        _scheduleTimeContainer.style.display = _scheduleSendCheckbox.checked ? 'block' : 'none';
-        if (_scheduleSendCheckbox.checked && _scheduleTimeInput) {
-            const tomorrow = new Date();
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            tomorrow.setMinutes(tomorrow.getMinutes() - tomorrow.getTimezoneOffset());
-            _scheduleTimeInput.value = tomorrow.toISOString().slice(0, 16);
-        }
-    });
-}
             const closeFortune = document.getElementById('close-fortune');
             if (closeFortune) {
                 closeFortune.addEventListener('click', () => {

@@ -867,7 +867,7 @@
 .moments-container .interaction-bubble {
   background: #f3f3f3;
   border-radius: 4px;
-  overflow: visible;
+  overflow: hidden;
   font-size: 14px;
 }
 
@@ -894,7 +894,6 @@
 
 .moments-container .comment-section {
   padding: 6px 8px;
-  overflow: visible;
 }
 
 .moments-container .comment-item {
