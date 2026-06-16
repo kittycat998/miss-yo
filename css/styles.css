@@ -15250,3 +15250,15 @@ body::before{
 #mood-selector-overlay #custom-mood-dialog {
     z-index:70082 !important;
 }
+
+/* safe5: 心情手帐日期详情灰屏修复：子卡片必须随遮罩一起显形，不能被旧动画 opacity:0 卡住 */
+#mood-selector-overlay.active {
+    display:flex !important;
+    opacity:1 !important;
+    visibility:visible !important;
+}
+#mood-selector-overlay.active #mood-editor-view,
+#mood-selector-overlay.active #mood-detail-view {
+    visibility:visible !important;
+    pointer-events:auto !important;
+}

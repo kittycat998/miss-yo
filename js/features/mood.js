@@ -1133,6 +1133,44 @@ function formatDateStr(date) {
 
 let currentMoodSelection = null; 
 
+let moodOverlayCloseTimer = null;
+function clearMoodOverlayCloseTimer() {
+    if (moodOverlayCloseTimer) {
+        clearTimeout(moodOverlayCloseTimer);
+        moodOverlayCloseTimer = null;
+    }
+}
+
+function forceMoodCardVisible(card) {
+    if (!card) return;
+    card.style.setProperty('visibility', 'visible', 'important');
+    card.style.setProperty('opacity', '1', 'important');
+    card.style.setProperty('transform', 'none', 'important');
+    card.style.setProperty('animation', 'none', 'important');
+    card.style.setProperty('pointer-events', 'auto', 'important');
+}
+
+function activateMoodOverlayView(mode) {
+    clearMoodOverlayCloseTimer();
+    const overlay = ensureMoodOverlayStack() || document.getElementById('mood-selector-overlay');
+    const editorView = document.getElementById('mood-editor-view');
+    const detailView = document.getElementById('mood-detail-view');
+    const customDialog = document.getElementById('custom-mood-dialog');
+    if (!overlay) return null;
+
+    overlay.style.setProperty('display', 'flex', 'important');
+    overlay.style.setProperty('opacity', '1', 'important');
+    overlay.style.setProperty('visibility', 'visible', 'important');
+    overlay.style.setProperty('transition', 'none', 'important');
+    overlay.classList.add('active');
+
+    if (customDialog) customDialog.style.display = 'none';
+    if (editorView) editorView.style.display = mode === 'editor' ? 'block' : 'none';
+    if (detailView) detailView.style.display = mode === 'detail' ? 'block' : 'none';
+    forceMoodCardVisible(mode === 'detail' ? detailView : editorView);
+    return overlay;
+}
+
 function ensureMoodOverlayStack() {
     const overlay = document.getElementById('mood-selector-overlay');
     if (!overlay) return null;
@@ -1179,6 +1217,20 @@ window.openMoodModal = function(options) {
         viewTrash && viewTrash.classList.add('hidden-view');
         if (typeof renderMoodCalendar === 'function') renderMoodCalendar();
     } catch(e) { console.warn('[Mood] render before open failed:', e); }
+    try {
+        clearMoodOverlayCloseTimer();
+        const overlay = document.getElementById('mood-selector-overlay');
+        if (overlay) {
+            overlay.classList.remove('active');
+            overlay.style.opacity = '';
+            overlay.style.transition = '';
+            overlay.style.display = '';
+        }
+        const editorView = document.getElementById('mood-editor-view');
+        const detailView = document.getElementById('mood-detail-view');
+        if (editorView) editorView.style.display = 'none';
+        if (detailView) detailView.style.display = 'none';
+    } catch(e) {}
 
     const doShow = () => {
         if (document.body && modal.parentElement !== document.body) document.body.appendChild(modal);
@@ -1876,10 +1928,7 @@ function openMoodSelector(dateStr, editTarget) {
     document.getElementById('mood-page-next').disabled = false;
 
     renderMoodOptionsGrid(currentKey);
-    window._moodOverlayRafId = requestAnimationFrame(() => {
-        window._moodOverlayRafId = null;
-        overlay.classList.add('active');
-    });
+    activateMoodOverlayView('editor');
 }
 
 window.editPartnerMoodRecord = function() {
@@ -1972,7 +2021,7 @@ function showDayDetails(dateStr, data) {
 
     editorView.style.display = 'none';
     detailView.style.display = 'block';
-    overlay.classList.add('active');
+    activateMoodOverlayView('detail');
 }
 
 document.getElementById('edit-existing-mood').addEventListener('click', () => {
@@ -1990,15 +2039,32 @@ window.closeMoodOverlay = function() {
     }
     const overlay = document.getElementById('mood-selector-overlay');
     if(overlay) {
+        clearMoodOverlayCloseTimer();
         overlay.style.opacity = '0';
-        overlay.style.transition = 'opacity 0.25s ease';
-        setTimeout(() => {
+        overlay.style.transition = 'opacity 0.2s ease';
+        moodOverlayCloseTimer = setTimeout(() => {
             overlay.classList.remove('active');
             overlay.style.opacity = '';
             overlay.style.transition = '';
+            overlay.style.display = '';
+            const editorView = document.getElementById('mood-editor-view');
+            const detailView = document.getElementById('mood-detail-view');
+            if (editorView) {
+                editorView.style.display = 'none';
+                editorView.style.opacity = '';
+                editorView.style.transform = '';
+                editorView.style.animation = '';
+            }
+            if (detailView) {
+                detailView.style.display = 'none';
+                detailView.style.opacity = '';
+                detailView.style.transform = '';
+                detailView.style.animation = '';
+            }
             const customDialog = document.getElementById('custom-mood-dialog');
             if(customDialog) customDialog.style.display = 'none';
-        }, 250);
+            moodOverlayCloseTimer = null;
+        }, 200);
     }
 };
 window.viewMoodDetailFromEditor = function() {

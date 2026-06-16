@@ -945,6 +945,28 @@
     return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${pad(date.getHours())}:${pad(date.getMinutes())}`;
   }
 
+  function getMomentDisplayProfile(m) {
+    const moment = m || {};
+    let avatar = isValidAvatar(moment.avatar) ? moment.avatar : userConfig.avatar;
+    if (moment.author === 'me' && isValidAvatar(userConfig.avatar)) {
+      avatar = userConfig.avatar;
+    } else if ((moment.author === 'partner' || moment.authorId === 'partner') && isValidAvatar(getPartnerAvatar())) {
+      avatar = getPartnerAvatar();
+    }
+
+    let nickname = isValidProfileValue(moment.nickname) ? moment.nickname : userConfig.name;
+    if ((moment.author === 'partner' || moment.authorId === 'partner') && isValidProfileValue(getPartnerName())) {
+      nickname = getPartnerName();
+    }
+
+    return {
+      avatar,
+      nickname,
+      identity: isValidProfileValue(moment.identity) ? moment.identity : '',
+      text: isValidProfileValue(moment.text) ? moment.text : ''
+    };
+  }
+
   let editingCommentMomentId = null;
   let editingCommentId = null;
 
@@ -955,15 +977,11 @@
     normalizeMomentComments(m);
     if (!Array.isArray(m.mentions)) m.mentions = [];
     // 发过的朋友圈头像不再固定吃旧快照：自己的动态跟随当前朋友圈头像，梦角动态跟随当前梦角头像；普通好友仍保留发布时头像。
-    let displayAvatar = isValidAvatar(m.avatar) ? m.avatar : userConfig.avatar;
-    if (m.author === 'me' && isValidAvatar(userConfig.avatar)) {
-      displayAvatar = userConfig.avatar;
-    } else if ((m.author === 'partner' || m.authorId === 'partner') && isValidAvatar(getPartnerAvatar())) {
-      displayAvatar = getPartnerAvatar();
-    }
-    const displayNickname = isValidProfileValue(m.nickname) ? m.nickname : userConfig.name;
-    const displayIdentity = isValidProfileValue(m.identity) ? m.identity : '';
-    const displayText = isValidProfileValue(m.text) ? m.text : '';
+    const profile = getMomentDisplayProfile(m);
+    const displayAvatar = profile.avatar;
+    const displayNickname = profile.nickname;
+    const displayIdentity = profile.identity;
+    const displayText = profile.text;
     const safeNickname = escapeHtml(displayNickname);
     const safeAvatar = escapeAttr(displayAvatar);
     const safeText = escapeHtml(displayText);
@@ -3067,12 +3085,15 @@
     }
 
     // 第二步：从时间筛选结果中按关键词过滤
+    const lowerKeyword = keyword.toLowerCase();
     const results = timeFiltered.filter(m => {
-      const textMatch = m.text.toLowerCase().includes(keyword.toLowerCase());
-      const nameMatch = m.nickname.toLowerCase().includes(keyword.toLowerCase());
-      const commentMatch = m.comments.some(c =>
-        c.text.toLowerCase().includes(keyword.toLowerCase()) ||
-        c.name.toLowerCase().includes(keyword.toLowerCase())
+      const profile = getMomentDisplayProfile(m);
+      const textMatch = String((m && m.text) || '').toLowerCase().includes(lowerKeyword);
+      const nameMatch = String(profile.nickname || '').toLowerCase().includes(lowerKeyword);
+      const comments = Array.isArray(m && m.comments) ? m.comments : [];
+      const commentMatch = comments.some(c =>
+        String((c && c.text) || '').toLowerCase().includes(lowerKeyword) ||
+        String((c && c.name) || '').toLowerCase().includes(lowerKeyword)
       );
       return textMatch || nameMatch || commentMatch;
     });
@@ -3086,15 +3107,19 @@
   }
 
   function renderSearchResultItem(m, keyword) {
-    const text = keyword ? highlightKeyword(m.text, keyword) : m.text;
-    const name = keyword ? highlightKeyword(m.nickname, keyword) : m.nickname;
+    const profile = getMomentDisplayProfile(m);
+    const text = highlightKeyword(m && m.text, keyword);
+    const name = highlightKeyword(profile.nickname, keyword);
+    const momentId = Number(m && m.id) || 0;
+    const safeAvatar = escapeAttr(profile.avatar);
+    const safeName = escapeAttr(profile.nickname);
     return `
-      <div class="search-result-item" onclick="MomentsApp.scrollToMoment(${m.id})">
+      <div class="search-result-item" onclick="MomentsApp.scrollToMoment(${momentId})">
         <div class="moment-header">
-          <img class="moment-avatar" src="${displayAvatar}" alt="${displayNickname}">
+          <img class="moment-avatar" src="${safeAvatar}" alt="${safeName}">
           <div class="moment-meta">
             <div class="moment-nickname">${name}</div>
-            <div class="moment-time">${formatMomentTime(m.time)}</div>
+            <div class="moment-time">${escapeHtml(formatMomentTime(m && m.time))}</div>
           </div>
         </div>
         <div class="moment-content" style="padding-left:52px;margin-bottom:0">
@@ -3104,44 +3129,78 @@
     `;
   }
 
+  function escapeRegExp(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
   function highlightKeyword(text, keyword) {
-    if (!keyword) return text;
-    const regex = new RegExp(keyword, 'gi');
-    return text.replace(regex, match => `<span class="search-highlight">${match}</span>`);
+    const raw = String(text || '');
+    if (!keyword) return escapeHtml(raw);
+    const safePattern = escapeRegExp(keyword);
+    if (!safePattern) return escapeHtml(raw);
+    const regex = new RegExp(safePattern, 'gi');
+    let html = '';
+    let lastIndex = 0;
+    raw.replace(regex, (match, ...args) => {
+      const index = args[args.length - 2];
+      html += escapeHtml(raw.slice(lastIndex, index));
+      html += `<span class="search-highlight">${escapeHtml(match)}</span>`;
+      lastIndex = index + match.length;
+      return match;
+    });
+    html += escapeHtml(raw.slice(lastIndex));
+    return html;
   }
 
   // 解析时间字符串为日期对象
   function parseTimeString(timeStr) {
+    if (timeStr instanceof Date) return Number.isFinite(timeStr.getTime()) ? timeStr : null;
+    if (typeof timeStr === 'number' || (typeof timeStr === 'string' && /^\d+$/.test(timeStr.trim()))) {
+      const date = new Date(Number(timeStr));
+      return Number.isFinite(date.getTime()) ? date : null;
+    }
+    const source = String(timeStr || '').trim();
+    if (!source) return null;
     const now = new Date();
 
+    const zhFullMatch = source.match(/(\d{4})年(\d{1,2})月(\d{1,2})日(?:\s+(\d{1,2}):(\d{1,2}))?/);
+    if (zhFullMatch) {
+      const year = parseInt(zhFullMatch[1]);
+      const month = parseInt(zhFullMatch[2]) - 1;
+      const day = parseInt(zhFullMatch[3]);
+      const hour = parseInt(zhFullMatch[4] || '0');
+      const minute = parseInt(zhFullMatch[5] || '0');
+      return new Date(year, month, day, hour, minute);
+    }
+
     // 处理 "X小时前"、"X分钟前"
-    const hourMatch = timeStr.match(/(\d+)小时前/);
+    const hourMatch = source.match(/(\d+)小时前/);
     if (hourMatch) {
       const hours = parseInt(hourMatch[1]);
       return new Date(now.getTime() - hours * 60 * 60 * 1000);
     }
 
-    const minMatch = timeStr.match(/(\d+)分钟前/);
+    const minMatch = source.match(/(\d+)分钟前/);
     if (minMatch) {
       const mins = parseInt(minMatch[1]);
       return new Date(now.getTime() - mins * 60 * 1000);
     }
 
     // 处理 "昨天"
-    if (timeStr === '昨天') {
+    if (source === '昨天') {
       const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       return yesterday;
     }
 
     // 处理 "X天前"
-    const dayMatch = timeStr.match(/(\d+)天前/);
+    const dayMatch = source.match(/(\d+)天前/);
     if (dayMatch) {
       const days = parseInt(dayMatch[1]);
       return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
     }
 
     // 处理 "X月X日"
-    const monthDayMatch = timeStr.match(/(\d+)月(\d+)日/);
+    const monthDayMatch = source.match(/(\d+)月(\d+)日/);
     if (monthDayMatch) {
       const month = parseInt(monthDayMatch[1]) - 1;
       const day = parseInt(monthDayMatch[2]);
@@ -3149,7 +3208,7 @@
     }
 
     // 处理完整日期 "2024-01-15" 或 "2024/01/15"
-    const fullDateMatch = timeStr.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    const fullDateMatch = source.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
     if (fullDateMatch) {
       const year = parseInt(fullDateMatch[1]);
       const month = parseInt(fullDateMatch[2]) - 1;
@@ -3282,24 +3341,30 @@
     }
 
     body.innerHTML = collected.map(m => {
-      const imagesHtml = m.images.length > 0 ? `
+      const profile = getMomentDisplayProfile(m);
+      const momentId = Number(m && m.id) || 0;
+      const safeAvatar = escapeAttr(profile.avatar);
+      const safeNickname = escapeHtml(profile.nickname);
+      const safeNicknameAttr = escapeAttr(profile.nickname);
+      const images = Array.isArray(m.images) ? m.images : [];
+      const imagesHtml = images.length > 0 ? `
         <div class="moment-images">
-          ${m.images.map((img, idx) => `<img src="${img}" alt="图片" onclick="MomentsApp.openPreview(${m.id}, ${idx}); MomentsApp.closeCollectionPanel();">`).join('')}
+          ${images.map((img, idx) => `<img src="${escapeAttr(img)}" alt="图片" onclick="MomentsApp.openPreview(${momentId}, ${idx}); MomentsApp.closeCollectionPanel();">`).join('')}
         </div>
       ` : '';
-      const locationHtml = m.location ? `<div class="moment-location">📍 ${m.location}</div>` : '';
-      const mentionsHtml = m.mentions && m.mentions.length > 0 ? `<div class="moment-mentions">提到了：${m.mentions.join('、')}</div>` : '';
+      const locationHtml = m.location ? `<div class="moment-location">📍 ${escapeHtml(m.location)}</div>` : '';
+      const mentionsHtml = m.mentions && m.mentions.length > 0 ? `<div class="moment-mentions">提到了：${m.mentions.map(escapeHtml).join('、')}</div>` : '';
 
       return `
         <div class="collection-item">
           <div class="moment-header">
-            <img class="moment-avatar" src="${displayAvatar}" alt="${displayNickname}">
+            <img class="moment-avatar" src="${safeAvatar}" alt="${safeNicknameAttr}">
             <div class="moment-meta">
-              <div class="moment-nickname">${displayNickname}</div>
-              <div class="moment-time">${formatMomentTime(m.time)}</div>
+              <div class="moment-nickname">${safeNickname}</div>
+              <div class="moment-time">${escapeHtml(formatMomentTime(m.time))}</div>
             </div>
           </div>
-          <div class="moment-text">${m.text}</div>
+          <div class="moment-text">${escapeHtml(m.text)}</div>
           ${imagesHtml}
           ${locationHtml}
           ${mentionsHtml}
