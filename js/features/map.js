@@ -362,29 +362,43 @@
         img.src = url;
     }
 
+    function isUsableAvatarUrl(url) {
+        return !!(url && typeof url === 'string' && url.indexOf('blob:') !== 0);
+    }
+
     function readAvatarSync(who) {
         var key = 'home_avatar_' + who;
+        var chatKey = who === 'me' ? 'myAvatar' : 'partnerAvatar';
         var url = '';
         try {
-            if (window.settings) {
+            // 先读当前聊天 DOM，避免地图打开早于异步大图读取时掉回默认头像。
+            var domImg = document.querySelector(who === 'me' ? '#my-avatar img' : '#partner-avatar img');
+            if (domImg && isUsableAvatarUrl(domImg.getAttribute('src') || domImg.src)) url = domImg.getAttribute('src') || domImg.src;
+            if (!url && window.settings) {
                 url = who === 'me' ? (window.settings.myAvatar || '') : (window.settings.partnerAvatar || '');
             }
             if (!url && typeof window.homeGetGlobal === 'function') url = window.homeGetGlobal(key) || '';
             if (!url && typeof window.homeGetItem === 'function') url = window.homeGetItem(key) || '';
             if (!url) url = localStorage.getItem(key) || '';
+            if (!url && typeof getStorageKey === 'function') url = localStorage.getItem(getStorageKey(chatKey)) || '';
         } catch (e) {}
         return url;
     }
 
     function readAvatarLarge(who) {
         var key = 'home_avatar_' + who;
+        var chatKey = who === 'me' ? 'myAvatar' : 'partnerAvatar';
         var tasks = [];
         if (typeof window.homeGetGlobalLarge === 'function') tasks.push(window.homeGetGlobalLarge(key));
         if (typeof window.homeGetLargeItem === 'function') tasks.push(window.homeGetLargeItem(key));
-        if (!tasks.length && typeof localforage !== 'undefined') tasks.push(localforage.getItem(key));
+        if (typeof localforage !== 'undefined') {
+            tasks.push(localforage.getItem(key));
+            try { if (typeof getStorageKey === 'function') tasks.push(localforage.getItem(getStorageKey(chatKey))); } catch(e) {}
+            try { if (window.APP_PREFIX && window.SESSION_ID) tasks.push(localforage.getItem(window.APP_PREFIX + window.SESSION_ID + '_' + chatKey)); } catch(e) {}
+        }
         tasks.forEach(function (task) {
             Promise.resolve(task).then(function (url) {
-                if (url) applyAvatarImage(who, url);
+                if (isUsableAvatarUrl(url)) applyAvatarImage(who, url);
             }).catch(function () {});
         });
     }
