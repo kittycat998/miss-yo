@@ -689,6 +689,27 @@ async function _safeSetPreserveNonEmpty(baseKey, value) {
     return localforage.setItem(fullKey, value);
 }
 
+async function _safeSetChatSettingsPreserveVisuals(value) {
+    const fullKey = getStorageKey('chatSettings');
+    let next = Object.assign({}, value || {});
+    try {
+        const old = await localforage.getItem(fullKey);
+        if (old && typeof old === 'object') {
+            const preserveWhenEmpty = ['customBubbleCss', 'customGlobalCss', 'customFontUrl'];
+            preserveWhenEmpty.forEach(function(k) {
+                if ((next[k] === '' || next[k] === null || next[k] === undefined) && old[k]) next[k] = old[k];
+            });
+            if ((!next.bubbleStyle || next.bubbleStyle === 'standard') && old.bubbleStyle && old.bubbleStyle !== 'standard' && !window.__bubbleStyleChangedThisSession) {
+                next.bubbleStyle = old.bubbleStyle;
+            }
+            ['messageFontFamily','messageFontWeight','messageLineHeight','fontSize','inChatAvatarEnabled','inChatAvatarSize','inChatAvatarPosition','alwaysShowAvatar','showPartnerNameInChat','myAvatarShape','partnerAvatarShape','myAvatarFrame','partnerAvatarFrame'].forEach(function(k) {
+                if ((next[k] === null || next[k] === undefined || next[k] === '') && old[k] !== null && old[k] !== undefined && old[k] !== '') next[k] = old[k];
+            });
+        }
+    } catch(e) {}
+    return localforage.setItem(fullKey, next);
+}
+
 const saveData = async () => {
     if (!SESSION_ID) {
         console.warn('[saveData] SESSION_ID 尚未初始化，跳过保存以防数据写入临时 key');
@@ -696,7 +717,7 @@ const saveData = async () => {
     }
 
     const promises = [
-        { key: 'chatSettings',           val: () => localforage.setItem(getStorageKey('chatSettings'), settings) },
+        { key: 'chatSettings',           val: () => _safeSetChatSettingsPreserveVisuals(settings) },
         { key: 'customReplies',          val: () => _safeSetPreserveNonEmpty('customReplies', customReplies) },
         { key: 'customReplyGroups',      val: () => _safeSetPreserveNonEmpty('customReplyGroups', window.customReplyGroups || []) },
         { key: 'customPokeGroups',        val: () => _safeSetPreserveNonEmpty('customPokeGroups', window.customPokeGroups || []) },

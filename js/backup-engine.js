@@ -7,6 +7,37 @@
 
     var MIN_MEDIA_CHARS = 800;
 
+    function registry() {
+        return global.ChatStorageRegistry || null;
+    }
+
+    function registryCategories() {
+        var r = registry();
+        return r && typeof r.listCategories === 'function' ? r.listCategories() : null;
+    }
+
+    function registryManifest() {
+        var r = registry();
+        return r && typeof r.getManifest === 'function' ? r.getManifest() : null;
+    }
+
+    function registryNativeSpecs() {
+        var r = registry();
+        return r && typeof r.getNativeIndexedDBSpecs === 'function' ? r.getNativeIndexedDBSpecs() : null;
+    }
+
+    function registryAllows(type, key, flags) {
+        var r = registry();
+        if (r && typeof r.shouldIncludeKey === 'function') return r.shouldIncludeKey(type, key, flags || {});
+        return !shouldSkipKeyGroupChat(key, flags || {});
+    }
+
+    function registryAllowsNative(path, flags) {
+        var r = registry();
+        if (r && typeof r.shouldIncludeNativePath === 'function') return r.shouldIncludeNativePath(path, flags || {});
+        return true;
+    }
+
     function escapeRe(s) {
         return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
@@ -185,16 +216,240 @@
         if (!flags.inclCustom) p.push('customReplies', 'customPokes', 'customStatuses', 'customMottos', 'customIntros', 'customEmojis', 'customReplyGroups', 'customPokeGroups', 'customStatusGroups');
         if (!flags.inclAnn) p.push('anniversaries');
         if (!flags.inclThemes) p.push('customThemes', 'themeSchemes');
-        if (!flags.inclDg) p.push('dg_custom_data', 'dg_status_pool', 'weekly_fortune', 'daily_fortune', 'customWeather_');
+        if (!flags.inclDg) p.push('dg_custom_data', 'dg_status_pool', 'weekly_fortune', 'daily_fortune', 'customWeather_', 'dg_header_bg', 'dg_overlay_bg', 'dg_overlay_bg_tint');
+        if (!flags.inclAnn) p.push('annHeaderBg_');
         return p;
     }
 
     function shouldSkipKeyGroupChat(key, flags) {
         if (!key) return true;
-        if (key.startsWith('annHeaderBg_')) return true;
-        if (key.indexOf('dg_header_bg') !== -1 || key.indexOf('dg_overlay_bg') !== -1) return true;
         var patterns = buildModuleSkipPatterns(flags || {});
         return patterns.some(function (p) { return key.indexOf(p) !== -1; });
+    }
+
+    var NATIVE_IDB_SPECS = registryNativeSpecs() || {
+        ShopDB: {
+            version: 2,
+            stores: {
+                products: { keyPath: 'key' },
+                images: { keyPath: 'productId' }
+            }
+        },
+        MomentsVideoDB: {
+            version: 2,
+            stores: {
+                videos: { keyPath: null },
+                images: { keyPath: null }
+            }
+        }
+    };
+
+    function hasIndexedDB() {
+        return typeof indexedDB !== 'undefined' && indexedDB && typeof indexedDB.open === 'function';
+    }
+
+    function openNativeDB(dbName, forWrite) {
+        return new Promise(function(resolve, reject) {
+            if (!hasIndexedDB()) return resolve(null);
+            var spec = NATIVE_IDB_SPECS[dbName] || { stores: {} };
+            var req;
+            try {
+                req = forWrite && spec.version ? indexedDB.open(dbName, spec.version) : indexedDB.open(dbName);
+            } catch (e) { reject(e); return; }
+            req.onupgradeneeded = function(e) {
+                var db = e.target.result;
+                var stores = spec.stores || {};
+                Object.keys(stores).forEach(function(storeName) {
+                    if (db.objectStoreNames.contains(storeName)) return;
+                    var cfg = stores[storeName] || {};
+                    if (cfg.keyPath) db.createObjectStore(storeName, { keyPath: cfg.keyPath });
+                    else db.createObjectStore(storeName);
+                });
+            };
+            req.onsuccess = function(e) { resolve(e.target.result); };
+            req.onerror = function() { reject(req.error || new Error('IndexedDB open failed: ' + dbName)); };
+            req.onblocked = function() { console.warn('[backup] IndexedDB blocked:', dbName); };
+        });
+    }
+
+    function closeDb(db) {
+        try { if (db && typeof db.close === 'function') db.close(); } catch(e) {}
+    }
+
+    function dumpNativeStore(db, storeName) {
+        return new Promise(function(resolve) {
+            var rows = [];
+            try {
+                if (!db || !db.objectStoreNames.contains(storeName)) return resolve(rows);
+                var tx = db.transaction(storeName, 'readonly');
+                var store = tx.objectStore(storeName);
+                var req = store.openCursor();
+                req.onsuccess = function(e) {
+                    var cur = e.target.result;
+                    if (!cur) return;
+                    rows.push({ key: cur.key, value: deepCloneJsonSafe(cur.value) });
+                    cur.continue();
+                };
+                req.onerror = function() { resolve(rows); };
+                tx.oncomplete = function() { resolve(rows); };
+                tx.onerror = function() { resolve(rows); };
+                tx.onabort = function() { resolve(rows); };
+            } catch (e) {
+                console.warn('[backup] 原生 IndexedDB 读取失败:', storeName, e);
+                resolve(rows);
+            }
+        });
+    }
+
+    async function collectNativeIndexedDB(flags) {
+        var out = {};
+        if (!hasIndexedDB()) return out;
+        var dbNames = Object.keys(registryNativeSpecs() || NATIVE_IDB_SPECS);
+        for (var i = 0; i < dbNames.length; i++) {
+            var dbName = dbNames[i];
+            var spec = (registryNativeSpecs() || NATIVE_IDB_SPECS)[dbName] || {};
+            var db = null;
+            try {
+                db = await openNativeDB(dbName, false);
+                if (!db) continue;
+                var dbOut = {};
+                var stores = Object.keys(spec.stores || {});
+                for (var j = 0; j < stores.length; j++) {
+                    var storeName = stores[j];
+                    if (!registryAllowsNative(dbName + '.' + storeName, flags || {})) continue;
+                    var rows = await dumpNativeStore(db, storeName);
+                    if (rows && rows.length) dbOut[storeName] = rows;
+                }
+                if (Object.keys(dbOut).length) out[dbName] = dbOut;
+            } catch (e) {
+                // 这里故意不抛：备份不能因为某个原生 IDB 被浏览器锁住就整个失败。
+                console.warn('[backup] 原生 IndexedDB 跳过:', dbName, e);
+            } finally {
+                closeDb(db);
+            }
+        }
+        return out;
+    }
+
+    function extractNativeIndexedDBMedia(nativeData, state) {
+        var out = {};
+        nativeData = nativeData || {};
+        for (var dbName in nativeData) {
+            if (!Object.prototype.hasOwnProperty.call(nativeData, dbName)) continue;
+            out[dbName] = {};
+            var stores = nativeData[dbName] || {};
+            for (var storeName in stores) {
+                if (!Object.prototype.hasOwnProperty.call(stores, storeName)) continue;
+                out[dbName][storeName] = (stores[storeName] || []).map(function(row) {
+                    return {
+                        key: row ? row.key : undefined,
+                        value: extractMediaTree(row ? row.value : undefined, state)
+                    };
+                });
+            }
+        }
+        return out;
+    }
+
+    function inlineNativeIndexedDBMedia(nativeData, mediaStore) {
+        var out = {};
+        nativeData = nativeData || {};
+        for (var dbName in nativeData) {
+            if (!Object.prototype.hasOwnProperty.call(nativeData, dbName)) continue;
+            out[dbName] = {};
+            var stores = nativeData[dbName] || {};
+            for (var storeName in stores) {
+                if (!Object.prototype.hasOwnProperty.call(stores, storeName)) continue;
+                out[dbName][storeName] = (stores[storeName] || []).map(function(row) {
+                    return {
+                        key: row ? row.key : undefined,
+                        value: inlineMediaTree(row ? row.value : undefined, mediaStore)
+                    };
+                });
+            }
+        }
+        return out;
+    }
+
+    function filterNativeByCategories(nativeData, selectedIds, categories) {
+        if (!selectedIds || !selectedIds.length) return {};
+        var selected = categories.filter(function (c) { return selectedIds.indexOf(c.id) !== -1; });
+        var allNormal = categories.filter(function (c) { return !c.catchAll; });
+        var wantsCatchAll = selected.some(function (c) { return !!c.catchAll; });
+        var out = {};
+        function pathMatched(c, path) {
+            return !!(c.nativeIndexedDBNeedles && matchAnyNeedles(path, c.nativeIndexedDBNeedles));
+        }
+        for (var dbName in (nativeData || {})) {
+            if (!Object.prototype.hasOwnProperty.call(nativeData, dbName)) continue;
+            var stores = nativeData[dbName] || {};
+            for (var storeName in stores) {
+                if (!Object.prototype.hasOwnProperty.call(stores, storeName)) continue;
+                var path = dbName + '.' + storeName;
+                var ok = selected.some(function(c) { return !c.catchAll && pathMatched(c, path); });
+                if (!ok && wantsCatchAll) {
+                    var known = allNormal.some(function(c) { return pathMatched(c, path); });
+                    ok = !known;
+                }
+                if (!ok) continue;
+                if (!out[dbName]) out[dbName] = {};
+                out[dbName][storeName] = stores[storeName];
+            }
+        }
+        return out;
+    }
+
+    function writeNativeStore(db, storeName, rows) {
+        return new Promise(function(resolve) {
+            try {
+                if (!db || !db.objectStoreNames.contains(storeName)) return resolve();
+                var tx = db.transaction(storeName, 'readwrite');
+                var store = tx.objectStore(storeName);
+                var keyPath = store.keyPath;
+                var writeRows = function() {
+                    (rows || []).forEach(function(row) {
+                        if (!row) return;
+                        if (keyPath) store.put(row.value);
+                        else store.put(row.value, row.key);
+                    });
+                };
+                try {
+                    var clearReq = store.clear();
+                    clearReq.onsuccess = writeRows;
+                    clearReq.onerror = function() { writeRows(); };
+                } catch (clearErr) {
+                    writeRows();
+                }
+                tx.oncomplete = function() { resolve(); };
+                tx.onerror = function() { console.warn('[backup] 原生 IndexedDB 写入失败:', storeName, tx.error); resolve(); };
+                tx.onabort = function() { console.warn('[backup] 原生 IndexedDB 写入中断:', storeName, tx.error); resolve(); };
+            } catch (e) {
+                console.warn('[backup] 原生 IndexedDB 写入异常:', storeName, e);
+                resolve();
+            }
+        });
+    }
+
+    async function applyNativeIndexedDB(nativeData) {
+        if (!nativeData || typeof nativeData !== 'object' || !hasIndexedDB()) return;
+        var dbNames = Object.keys(nativeData);
+        for (var i = 0; i < dbNames.length; i++) {
+            var dbName = dbNames[i];
+            var db = null;
+            try {
+                db = await openNativeDB(dbName, true);
+                if (!db) continue;
+                var stores = nativeData[dbName] || {};
+                var storeNames = Object.keys(stores);
+                for (var j = 0; j < storeNames.length; j++) {
+                    await writeNativeStore(db, storeNames[j], stores[storeNames[j]]);
+                }
+            } catch (e) {
+                console.warn('[backup] 原生 IndexedDB 恢复跳过:', dbName, e);
+            } finally {
+                closeDb(db);
+            }
+        }
     }
 
     /**
@@ -209,7 +464,7 @@
         var keys = await localforage.keys();
         for (var i = 0; i < keys.length; i++) {
             var key = keys[i];
-            if (shouldSkipKeyGroupChat(key, flags)) continue;
+            if (!registryAllows('localforage', key, flags)) continue;
             try {
                 var rawVal = await localforage.getItem(key);
                 if (rawVal === null || rawVal === undefined) continue;
@@ -219,12 +474,14 @@
         var lsData = {};
         for (var j = 0; j < localStorage.length; j++) {
             var lk = localStorage.key(j);
-            if (!lk || shouldSkipKeyGroupChat(lk, flags)) continue;
+            if (!lk || !registryAllows('localStorage', lk, flags)) continue;
             try {
                 lsData[lk] = localStorage.getItem(lk);
             } catch (e2) {}
         }
+        var nativeData = await collectNativeIndexedDB(flags);
         var state = { store: {}, map: new Map(), n: 0 };
+        var nativeOut = extractNativeIndexedDBMedia(nativeData, state);
         var lfOut = {};
         for (var k in lfData) {
             if (!Object.prototype.hasOwnProperty.call(lfData, k)) continue;
@@ -245,7 +502,9 @@
             modules: flags,
             mediaStore: state.store,
             localforage: lfOut,
-            localStorage: lsOut
+            localStorage: lsOut,
+            nativeIndexedDB: nativeOut,
+            storageManifest: registryManifest()
         };
     }
 
@@ -365,9 +624,14 @@
                     modules: payload.modules,
                     localforage: payload.localforage,
                     localStorage: payload.localStorage,
+                    nativeIndexedDB: payload.nativeIndexedDB || {},
+                    storageManifest: payload.storageManifest || registryManifest(),
                     mediaIndex: mediaIndex
                 };
                 zip.file('backup.json', '\uFEFF' + JSON.stringify(jsonBody));
+                if (jsonBody.storageManifest) {
+                    zip.file('storage-manifest.json', '\uFEFF' + JSON.stringify(jsonBody.storageManifest, null, 2));
+                }
                 var zipBlob = await zip.generateAsync({
                     type: 'blob',
                     compression: 'DEFLATE',
@@ -441,10 +705,25 @@
         return false;
     }
 
+    function startsWithAny(key, prefixes) {
+        if (!key || !prefixes || !prefixes.length) return false;
+        return prefixes.some(function (p) { return p && key.indexOf(p) === 0; });
+    }
+
+    function matchLfKey(key, cat) {
+        if (!cat) return false;
+        // registry 里新字段叫 localforageNeedles / localforagePrefixes；
+        // 旧导入筛选兼容字段叫 indexedDBNeedles。这里三者都认，避免只按分类导入时漏掉前缀型键。
+        if (cat.indexedDBNeedles && matchAnyNeedles(key, cat.indexedDBNeedles)) return true;
+        if (cat.localforageNeedles && matchAnyNeedles(key, cat.localforageNeedles)) return true;
+        if (startsWithAny(key, cat.localforagePrefixes)) return true;
+        return false;
+    }
+
     function matchLsKey(key, cat) {
         if (!cat) return false;
         if (cat.localStorageNeedles && matchAnyNeedles(key, cat.localStorageNeedles)) return true;
-        if (cat.localStoragePrefixes && cat.localStoragePrefixes.some(function (p) { return key.indexOf(p) === 0; })) return true;
+        if (startsWithAny(key, cat.localStoragePrefixes)) return true;
         return false;
     }
 
@@ -456,9 +735,9 @@
         var out = {};
         for (var k in lf) {
             if (!Object.prototype.hasOwnProperty.call(lf, k)) continue;
-            var ok = selected.some(function (c) { return !c.catchAll && matchAnyNeedles(k, c.indexedDBNeedles); });
+            var ok = selected.some(function (c) { return !c.catchAll && matchLfKey(k, c); });
             if (!ok && wantsCatchAll) {
-                var matchedKnown = allNormal.some(function (c) { return matchAnyNeedles(k, c.indexedDBNeedles); });
+                var matchedKnown = allNormal.some(function (c) { return matchLfKey(k, c); });
                 ok = !matchedKnown;
             }
             if (ok) out[k] = lf[k];
@@ -495,10 +774,12 @@
         var mediaStore = data.mediaStore || {};
         var lfRaw = getLfSource(data);
         var lsRaw = data.localStorage || {};
+        var nativeRaw = data.nativeIndexedDB || {};
 
         if (selective && opt.selectedCategoryIds && opt.categories) {
             lfRaw = filterLfByCategories(lfRaw, opt.selectedCategoryIds, opt.categories);
             lsRaw = filterLsByCategories(lsRaw, opt.selectedCategoryIds, opt.categories);
+            nativeRaw = filterNativeByCategories(nativeRaw, opt.selectedCategoryIds, opt.categories);
         }
 
         var lfKeys = Object.keys(lfRaw);
@@ -529,6 +810,12 @@
             } catch (e2) {
                 console.warn('[backup] localStorage 恢复失败', targetLsKey, e2);
             }
+        }
+
+        try {
+            await applyNativeIndexedDB(inlineNativeIndexedDBMedia(nativeRaw, mediaStore));
+        } catch (e5) {
+            console.warn('[backup] 原生 IndexedDB 恢复失败', e5);
         }
 
         // 修复 sessionList 中的会话 ID：键已被 remap，但值里的 id 字段还是旧 sessionId
@@ -563,6 +850,7 @@
         if (d.type === 'full' || (typeof d.type === 'string' && d.type.indexOf('full-backup') !== -1)) return true;
         if (d.indexedDB && typeof d.indexedDB === 'object') return true;
         if (d.localforage && typeof d.localforage === 'object') return true;
+        if (d.nativeIndexedDB && typeof d.nativeIndexedDB === 'object') return true;
         return false;
     }
 
@@ -579,6 +867,9 @@
         getLfSource: getLfSource,
         isFullBackupShape: isFullBackupShape,
         shouldSkipKeyGroupChat: shouldSkipKeyGroupChat,
-        buildModuleSkipPatterns: buildModuleSkipPatterns
+        buildModuleSkipPatterns: buildModuleSkipPatterns,
+        collectNativeIndexedDB: collectNativeIndexedDB,
+        getStorageCategories: registryCategories,
+        getStorageManifest: registryManifest
     };
 })(typeof window !== 'undefined' ? window : this);

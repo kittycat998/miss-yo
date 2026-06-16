@@ -440,7 +440,7 @@ async function importAllData(file) {
         }
         if (!confirm('导入全量备份将按你的选择覆盖对应数据。\n\n头像/背景等如勾选导入会写入备份中的内容。\n\n确定继续吗？')) return;
 
-        const categories = [
+        const categories = (ChatBackup.getStorageCategories && ChatBackup.getStorageCategories()) || [
             {
                 id: 'chat',
                 label: '聊天记录 / 会话 / 红包',
@@ -462,7 +462,7 @@ async function importAllData(file) {
             {
                 id: 'ann',
                 label: '纪念日',
-                indexedDBNeedles: ['anniversaries'],
+                indexedDBNeedles: ['anniversaries', 'annHeaderBg_'],
                 localStorageNeedles: []
             },
             {
@@ -481,19 +481,21 @@ async function importAllData(file) {
                 id: 'dg',
                 label: '每日公告 / 运势 / 天气',
                 indexedDBNeedles: [],
-                localStorageNeedles: ['dg_custom_data', 'dg_status_pool', 'weekly_fortune', 'daily_fortune'],
+                localStorageNeedles: ['dg_custom_data', 'dg_status_pool', 'weekly_fortune', 'daily_fortune', 'dg_header_bg', 'dg_overlay_bg', 'dg_overlay_bg_tint'],
                 localStoragePrefixes: ['customWeather_']
             },
             {
                 id: 'moments',
                 label: '朋友圈 / 相册 / 访客 / 草稿',
                 indexedDBNeedles: ['moments', 'momentsData', 'moments_lf', 'momentsMedia', 'momentsAlbum'],
+                nativeIndexedDBNeedles: ['MomentsVideoDB.videos', 'MomentsVideoDB.images'],
                 localStorageNeedles: ['moments', 'visitorRecords', 'visitorLastOnline', 'visitorLastViewed', 'publishDraft', 'profile_me', 'profile_partner']
             },
             {
                 id: 'shop',
                 label: '商城 / 礼物柜 / 自动下单',
                 indexedDBNeedles: ['shop', 'giftCabinet'],
+                nativeIndexedDBNeedles: ['ShopDB.products', 'ShopDB.images'],
                 localStorageNeedles: ['shop_', 'ShopApp', 'giftCabinet', 'shopGiftCabinet', 'shopBalance', 'shopSearchHistory', 'shopAutoBuySettings']
             },
             {

@@ -201,41 +201,31 @@
     }
 
     function updateStats() {
+        // 安全版：这里只做轻量统计，绝不逐个读取 IndexedDB 大图/视频。
+        // 之前一打开数据管理就 localforage.keys() + getItem() + JSON.stringify() 全仓库，
+        // 手机桌面 WebView 很容易被大图/视频撑爆内存，看起来就是“闪退”。
         var total = 0, msgs = 0, cfg = 0, media = 0;
-        var processLS = function () {
+        try {
             for (var i = 0; i < localStorage.length; i++) {
                 var k = localStorage.key(i) || '';
                 var v = localStorage.getItem(k) || '';
                 var bytes = (k.length + v.length) * 2;
                 total += bytes;
                 if (/messages|msgs|session/i.test(k)) msgs += bytes;
-                else if (v.startsWith('data:image') || v.startsWith('data:video')) media += bytes;
+                else if (/avatar|image|photo|bg|background|wallpaper|data:image|data:video/i.test(k + ' ' + v.slice(0, 64))) media += bytes;
                 else cfg += bytes;
             }
-            applyStats(total, msgs, cfg, media);
-        };
-        try {
-            if (window.localforage) {
-                localforage.keys().then(function (keys) {
-                    var promises = keys.map(function (k) {
-                        return localforage.getItem(k).then(function (raw) {
-                            if (raw == null) return { k: k, b: 0 };
-                            var str = typeof raw === 'string' ? raw : JSON.stringify(raw);
-                            return { k: k, b: (k.length + str.length) * 2 };
-                        });
-                    });
-                    Promise.all(promises).then(function (results) {
-                        results.forEach(function (r) {
-                            total += r.b;
-                            if (/messages|msgs|session/i.test(r.k)) msgs += r.b;
-                            else if (/avatar|image|photo|bg|background|wallpaper/i.test(r.k)) media += r.b;
-                            else cfg += r.b;
-                        });
-                        applyStats(total, msgs, cfg, media);
-                    }).catch(processLS);
-                }).catch(processLS);
-            } else { processLS(); }
-        } catch (e) { processLS(); }
+        } catch(e) {}
+        applyStats(total, msgs, cfg, media);
+        var label = document.getElementById('dm-storage-total');
+        if (label) {
+            label.textContent = fmt(total) + ' 本地缓存';
+            if (window.localforage && typeof localforage.length === 'function') {
+                localforage.length().then(function(n) {
+                    if (label) label.textContent = fmt(total) + ' 本地缓存 · IndexedDB ' + n + ' 项';
+                }).catch(function() {});
+            }
+        }
     }
 
     function syncToggles() {
@@ -466,57 +456,31 @@
 })();
 
 function updateStorageUsageBar() {
+    // 安全版：只看 localStorage 体积 + IndexedDB 项数，不读取 IndexedDB 内容。
     var bar   = document.getElementById('dm-storage-bar')   || document.getElementById('storage-usage-fill');
     var text  = document.getElementById('dm-storage-total') || document.getElementById('storage-usage-text');
     if (!bar && !text) return;
-
     try {
-        if (window.localforage && window.APP_PREFIX) {
-            localforage.keys().then(function(keys) {
-                var promises = keys.map(function(k) {
-                    return localforage.getItem(k).then(function(v) {
-                        if (v === null || v === undefined) return 0;
-                        var str = typeof v === 'string' ? v : JSON.stringify(v);
-                        return (k.length + str.length) * 2;
-                    });
-                });
-                Promise.all(promises).then(function(sizes) {
-                    var total   = sizes.reduce(function(a,b){return a+b;},0);
-                    var usedKB  = (total / 1024).toFixed(1);
-                    var maxBytes = 5 * 1024 * 1024;
-                    var pct     = Math.min(total / maxBytes * 100, 100).toFixed(1);
-                    var fmt     = function(b) { return b<1024 ? b+' B' : b<1048576 ? (b/1024).toFixed(1)+' KB' : (b/1048576).toFixed(2)+' MB'; };
-
-                    if (bar) {
-                        bar.style.width = pct + '%';
-                        if (parseFloat(pct) > 80)
-                            bar.style.background = 'linear-gradient(90deg,#FF3B30,#CC0000)';
-                        else if (parseFloat(pct) > 50)
-                            bar.style.background = 'linear-gradient(90deg,#FF9F0A,#E07000)';
-                        else
-                            bar.style.background = 'linear-gradient(90deg,var(--accent-color),rgba(var(--accent-color-rgb),0.6))';
-                    }
-                    if (text) text.textContent = fmt(total) + ' / ~5 MB (' + pct + '%)';
-                });
-            }).catch(function() {
-                var ls = 0;
-                for (var i = 0; i < localStorage.length; i++) {
-                    var k = localStorage.key(i) || '';
-                    var v = localStorage.getItem(k) || '';
-                    ls += (k.length + v.length) * 2;
-                }
-                var pct = Math.min(ls / (5*1024*1024) * 100, 100).toFixed(1);
-                if (bar) bar.style.width = pct + '%';
-                if (text) text.textContent = (ls/1024).toFixed(1) + ' KB (localStorage)';
-            });
-        } else {
-            if (text) text.textContent = '暂无数据';
-            if (bar)  bar.style.width  = '0%';
+        var ls = 0;
+        for (var i = 0; i < localStorage.length; i++) {
+            var k = localStorage.key(i) || '';
+            var v = localStorage.getItem(k) || '';
+            ls += (k.length + v.length) * 2;
+        }
+        var pct = Math.min(ls / (5*1024*1024) * 100, 100).toFixed(1);
+        if (bar) bar.style.width = pct + '%';
+        var label = (ls < 1024) ? (ls + ' B') : (ls < 1048576 ? (ls/1024).toFixed(1) + ' KB' : (ls/1048576).toFixed(2) + ' MB');
+        if (text) text.textContent = label + ' 本地缓存';
+        if (window.localforage && typeof localforage.length === 'function') {
+            localforage.length().then(function(n) {
+                if (text) text.textContent = label + ' 本地缓存 · IndexedDB ' + n + ' 项';
+            }).catch(function() {});
         }
     } catch(e) {
         if (text) text.textContent = '无法读取';
     }
 }
+
 
 (function() {
     var orig = window.showModal;
