@@ -526,13 +526,12 @@ async function importAllData(file) {
 
         const pickSelected = () => new Promise((resolve) => {
             const overlay = document.createElement('div');
-            const pickerZ = Math.max(100000700, Number(window.__modalTopZ) || 0) + 50;
+            const pickerZ = window.__nextOverlayZ ? window.__nextOverlayZ() : 90010;
             overlay.style.cssText = `
                 position:fixed;inset:0;background:rgba(0,0,0,0.6);
                 backdrop-filter:blur(10px);display:flex;align-items:flex-end;justify-content:center;
             `;
             overlay.style.setProperty('z-index', String(pickerZ), 'important');
-            window.__modalTopZ = Math.max(Number(window.__modalTopZ) || 0, pickerZ);
             overlay.innerHTML = `
                 <div style="
                     width:100%;max-width:560px;background:var(--secondary-bg);border-radius:24px 24px 0 0;

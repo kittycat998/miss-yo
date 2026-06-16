@@ -740,16 +740,13 @@ const saveData = async () => {
         } catch(e) { return null; }
     })();
 
-    if (partnerAvatarSrc) {
+    const isPersistableAvatarSrc = (src) => !!(src && typeof src === 'string' && !src.startsWith('blob:'));
+    if (isPersistableAvatarSrc(partnerAvatarSrc)) {
         promises.push({ key: 'partnerAvatar', val: () => localforage.setItem(getStorageKey('partnerAvatar'), partnerAvatarSrc) });
-    } else {
-        promises.push({ key: 'partnerAvatar', val: () => localforage.removeItem(getStorageKey('partnerAvatar')) });
     }
 
-    if (myAvatarSrc) {
+    if (isPersistableAvatarSrc(myAvatarSrc)) {
         promises.push({ key: 'myAvatar', val: () => localforage.setItem(getStorageKey('myAvatar'), myAvatarSrc) });
-    } else {
-        promises.push({ key: 'myAvatar', val: () => localforage.removeItem(getStorageKey('myAvatar')) });
     }
 
     const results = await Promise.allSettled(promises.map(p => {
@@ -2789,13 +2786,13 @@ function showModal(modalElement, focusElement = null) {
             } else if (document.body && document.body.lastElementChild !== modalElement) {
                 document.body.appendChild(modalElement);
             }
-            // 给后打开的弹窗更高层级，避免“子弹窗被父弹窗压在下面”。
-            const baseZ = 99999999;
-            window.__modalTopZ = Math.max(baseZ, Number(window.__modalTopZ) || baseZ) + 2;
-            // CSS 里 .modal / .modal-content 带 !important，普通 inline zIndex 会被压回低层级。
-            modalElement.style.setProperty('z-index', String(window.__modalTopZ), 'important');
+            // 统一弹窗层级：主弹窗固定在 60000 段，后开的子面板用 90000 段。
+            const openCount = Array.from(document.querySelectorAll('.modal')).filter(m => m !== modalElement && getComputedStyle(m).display !== 'none').length;
+            const modalZ = 60000 + openCount * 10;
+            window.__modalTopZ = modalZ;
+            modalElement.style.setProperty('z-index', String(modalZ), 'important');
             const immediateContent = modalElement.querySelector('.modal-content');
-            if (immediateContent) immediateContent.style.setProperty('z-index', String(window.__modalTopZ + 1), 'important');
+            if (immediateContent) immediateContent.style.setProperty('z-index', String(modalZ + 1), 'important');
             modalElement.style.display = 'flex';
             document.body.classList.add('modal-open');
             // 隐藏 header 和 input-area，彻底避免遮挡
@@ -2860,7 +2857,7 @@ function showModal(modalElement, focusElement = null) {
 
         function exportChatHistory() {
             const overlay = document.createElement('div');
-            overlay.style.cssText = 'position:fixed;inset:0;z-index:100000500;background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;animation:fadeIn 0.2s ease;';
+            overlay.style.cssText = 'position:fixed;inset:0;z-index:90010;background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;animation:fadeIn 0.2s ease;';
             overlay.innerHTML = `
                 <div style="background:var(--secondary-bg);border-radius:20px;padding:24px;width:88%;max-width:360px;box-shadow:0 20px 60px rgba(0,0,0,0.4);animation:modalContentSlideIn 0.3s ease forwards;">
                     <div style="font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:6px;display:flex;align-items:center;gap:8px;">
@@ -3101,7 +3098,7 @@ function showModal(modalElement, focusElement = null) {
                     }
 
                     const overlay = document.createElement('div');
-                    overlay.style.cssText = 'position:fixed;inset:0;z-index:100000500;background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;animation:fadeIn 0.2s ease;';
+                    overlay.style.cssText = 'position:fixed;inset:0;z-index:90010;background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;animation:fadeIn 0.2s ease;';
 
                     const makeRow = (id, icon, label, sublabel, available, checked) => {
                         if (!available) return '';
@@ -3296,28 +3293,68 @@ function showModal(modalElement, focusElement = null) {
 window.initializeSession = async function() {
     await migrateData();
 
-    const sessionsData = await localforage.getItem(`${APP_PREFIX}sessionList`);
-    sessionList = sessionsData || [];
+    async function readChatSessionCandidates() {
+        const out = [];
+        try {
+            const keys = await localforage.keys();
+            const prefix = String(APP_PREFIX);
+            const suffix = '_chatMessages';
+            for (const key of keys || []) {
+                if (!key || !key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+                const id = key.slice(prefix.length, -suffix.length);
+                if (!id) continue;
+                let count = 0;
+                try {
+                    const arr = await localforage.getItem(key);
+                    count = Array.isArray(arr) ? arr.length : 0;
+                } catch (e) {}
+                out.push({ id, count });
+            }
+        } catch (e) {}
+        out.sort((a, b) => b.count - a.count);
+        return out;
+    }
+
+    const sessionsData = await localforage.getItem(`${APP_PREFIX}sessionList`).catch(() => null);
+    sessionList = Array.isArray(sessionsData) ? sessionsData.filter(s => s && s.id) : [];
+
+    // 只补全会话列表，不删除、不迁移、不覆盖任何聊天数组。
+    // 用来修复 sessionList 丢失但 chatMessages 还在的情况。
+    const candidates = await readChatSessionCandidates();
+    let listChanged = false;
+    for (const c of candidates) {
+        if (!sessionList.some(s => s && s.id === c.id)) {
+            sessionList.push({ id: c.id, name: c.count > 0 ? `找回的会话（${c.count}条）` : '旧会话', createdAt: new Date().toISOString() });
+            listChanged = true;
+        }
+    }
+    if (listChanged) await localforage.setItem(`${APP_PREFIX}sessionList`, sessionList).catch(() => {});
 
     const hash = window.location.hash.substring(1);
     if (hash && sessionList.some(s => s.id === hash)) {
         SESSION_ID = hash;
     } else if (sessionList.length > 0) {
-        const lastId = await localforage.getItem(`${APP_PREFIX}lastSessionId`);
+        const lastId = await localforage.getItem(`${APP_PREFIX}lastSessionId`).catch(() => null);
         SESSION_ID = lastId && sessionList.some(s => s.id === lastId) ? lastId : sessionList[0].id;
+
+        // 如果当前入口是空会话，而本机还有明确的非空聊天记录，切回消息最多的真实会话。
+        // 这个动作只改 lastSessionId，不动聊天内容本身。
+        try {
+            const currentMsgs = await localforage.getItem(`${APP_PREFIX}${SESSION_ID}_chatMessages`).catch(() => null);
+            const currentCount = Array.isArray(currentMsgs) ? currentMsgs.length : 0;
+            if (currentCount === 0 && candidates.length && candidates[0].count > 0 && candidates[0].id !== SESSION_ID) {
+                console.warn(`[boot] 当前会话为空，切回本地消息最多的会话：${candidates[0].id}（${candidates[0].count}条）`);
+                SESSION_ID = candidates[0].id;
+            }
+        } catch (e) {}
     } else {
         SESSION_ID = await createNewSession(false);
     }
 
-    await localforage.setItem(`${APP_PREFIX}lastSessionId`, SESSION_ID);
-
-    // Keep legacy/home modules that read from window.* in sync with the lexical state.
-    // Some merged modules use window.SESSION_ID / window.sessionList instead of the
-    // top-level let bindings, so without this the home session switcher and
-    // Moments cross-session logic can silently behave as if there is only one session.
+    await localforage.setItem(`${APP_PREFIX}lastSessionId`, SESSION_ID).catch(() => {});
     window.SESSION_ID = SESSION_ID;
     window.sessionList = sessionList;
-}
+};
 
 document.addEventListener('DOMContentLoaded', function() {
     const chatArea = document.querySelector('.main-chat-area');

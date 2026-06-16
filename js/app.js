@@ -50,18 +50,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             console.warn('[boot] 紧急备份检查失败:', e);
         }
 
-        updateLoader('正在修复本地存储索引...', '8%');
-        if (typeof window.__runStorageRepairNow === 'function') {
-            await safeAwait(window.__runStorageRepairNow(), null);
-        }
-
         updateLoader('正在建立安全连接...', '18%');
         await safeAwait(initializeSession());
-
-        updateLoader('正在确认会话记忆...', '30%');
-        if (typeof window.__runStorageRepairNow === 'function') {
-            await safeAwait(window.__runStorageRepairNow(), null);
-        }
+        updateLoader('正在确认会话...', '30%');
 
         updateLoader('正在读取记忆存档...', '45%');
         await safeAwait(loadData());

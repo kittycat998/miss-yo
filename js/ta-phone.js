@@ -366,7 +366,7 @@
             .ta-phone-container {
                 position: fixed !important;
                 top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
-                z-index: 100000 !important;
+                z-index: 90000 !important;
                 display: flex;
                 align-items: center;
                 justify-content: center;

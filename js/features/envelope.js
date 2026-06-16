@@ -43,12 +43,12 @@ function envSetModalLayer(modal, z) {
 }
 
 window.ensureEnvelopeModalStack = function() {
-    envSetModalLayer(document.getElementById('envelope-modal'), 100000000);
+    envSetModalLayer(document.getElementById('envelope-modal'), 60020);
 };
 
 window.ensureEnvelopeViewStack = function() {
-    envSetModalLayer(document.getElementById('envelope-modal'), 100000000);
-    envSetModalLayer(document.getElementById('envelope-view-modal'), 100000100);
+    envSetModalLayer(document.getElementById('envelope-modal'), 60020);
+    envSetModalLayer(document.getElementById('envelope-view-modal'), 60040);
 };
 
 // 获取原信内容

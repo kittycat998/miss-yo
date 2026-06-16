@@ -10945,7 +10945,7 @@
 }
 #my-sticker-url-modal .my-sticker-url-modal-content {
     position: relative !important;
-    z-index: 100000 !important;
+    z-index: 90000 !important;
     display: flex !important;
     flex-direction: column !important;
     width: min(92vw, 520px) !important;
@@ -15077,16 +15077,16 @@ body::before{
 
 /* 信封投递：阅读弹窗必须盖在信封列表弹窗之上；高于 homeShowModal 的 99999999，但不再用浏览器上限级 z-index。 */
 #envelope-modal {
-    z-index: 100000000 !important;
+    z-index: 60020 !important;
 }
 #envelope-modal .modal-content {
-    z-index: 100000001 !important;
+    z-index: 60021 !important;
 }
 #envelope-view-modal {
-    z-index: 100000100 !important;
+    z-index: 60040 !important;
 }
 #envelope-view-modal .modal-content {
-    z-index: 100000101 !important;
+    z-index: 60041 !important;
 }
 
 
@@ -15094,7 +15094,7 @@ body::before{
 
 /* clean11: 数据管理备份抽屉层级止血。showModal 会把 #data-modal 抬到 1e8 级，抽屉不能再停在 9999。 */
 .dm-action-drawer{
-    z-index:100000420 !important;
+    z-index:90020 !important;
     position:fixed !important;
     inset:0 !important;
     align-items:stretch !important;
@@ -15117,4 +15117,120 @@ body::before{
 }
 .dm-action-drawer .dm-drawer-backdrop{
     z-index:0 !important;
+}
+
+
+/* === FINAL STABLE LAYER + KEYBOARD CLEANUP ===
+   统一最后覆盖：删掉 1e8 层级思路；聊天布局回到 flex + fixed input，避免键盘弹出后主区被 visualViewport 压出白块。 */
+:root{
+    --z-modal:60000;
+    --z-modal-content:60001;
+    --z-sheet:90000;
+}
+html,
+body{
+    width:100% !important;
+    max-width:100vw !important;
+    height:100% !important;
+    min-height:100% !important;
+    overflow:hidden !important;
+    overflow-x:hidden !important;
+    background:var(--primary-bg) !important;
+}
+body{
+    position:absolute !important;
+    inset:0 !important;
+    display:flex !important;
+    flex-direction:column !important;
+    background:var(--primary-bg) !important;
+}
+body::before{
+    width:100vw !important;
+    height:100% !important;
+    min-height:100dvh !important;
+    background-size:cover !important;
+    background-position:center center !important;
+    background-repeat:no-repeat !important;
+}
+.main-chat-area{
+    flex:1 1 auto !important;
+    height:auto !important;
+    min-height:0 !important;
+    overflow:hidden !important;
+    padding-bottom:calc(var(--chat-input-height, 68px) + env(safe-area-inset-bottom, 0px)) !important;
+    background:transparent !important;
+}
+.chat-container,
+#chat-container{
+    flex:1 1 auto !important;
+    height:100% !important;
+    min-height:0 !important;
+    overflow-y:auto !important;
+    overflow-x:hidden !important;
+    -webkit-overflow-scrolling:touch !important;
+    overscroll-behavior:contain !important;
+    background:transparent !important;
+}
+.chat-messages,
+#chat-messages-container{
+    height:auto !important;
+    min-height:100% !important;
+    overflow:visible !important;
+    background:transparent !important;
+}
+.input-area-wrapper{
+    position:fixed !important;
+    left:0 !important;
+    right:0 !important;
+    bottom:0 !important;
+    width:100% !important;
+    max-width:100vw !important;
+    z-index:5000 !important;
+    background:var(--input-area-bg, var(--primary-bg)) !important;
+    overflow:visible !important;
+}
+.modal,
+#chat-modal,
+#data-modal,
+#settings-modal,
+#custom-replies-modal,
+#envelope-modal,
+#envelope-view-modal{
+    z-index:var(--z-modal) !important;
+}
+.modal-content,
+#chat-modal .modal-content,
+#data-modal .modal-content,
+#settings-modal .modal-content,
+#custom-replies-modal .modal-content,
+#envelope-modal .modal-content,
+#envelope-view-modal .modal-content{
+    z-index:var(--z-modal-content) !important;
+}
+.dm-action-drawer,
+.rp-overlay,
+.red-packet-overlay,
+.chat-video-player-overlay,
+.sticker-picker-popover,
+#user-sticker-picker.sticker-picker-popover{
+    z-index:var(--z-sheet) !important;
+}
+#chat-modal{
+    align-items:center !important;
+    justify-content:center !important;
+    padding:calc(env(safe-area-inset-top, 0px) + 10px) 10px calc(env(safe-area-inset-bottom, 0px) + 10px) !important;
+    box-sizing:border-box !important;
+}
+#chat-modal .modal-content{
+    width:min(96vw, 620px) !important;
+    max-height:calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 20px) !important;
+    margin:0 !important;
+    border-radius:24px !important;
+}
+#chat-modal .cs-panels,
+#chat-modal .cs-panel{
+    min-height:0 !important;
+    overflow-y:auto !important;
+    -webkit-overflow-scrolling:touch !important;
+    padding-bottom:calc(24px + env(safe-area-inset-bottom, 0px)) !important;
 }

@@ -1523,11 +1523,13 @@
         if (modalElement.parentElement !== document.body) {
             document.body.appendChild(modalElement);
         }
-        // 强制显示在最上层：不要固定 99999，否则会被后续高层弹窗压住。
-        const baseZ = 99999999;
-        window.__modalTopZ = Math.max(baseZ, Number(window.__modalTopZ) || baseZ) + 2;
+        // Home 弹窗也进入统一层级，不再使用 99999999 这种会压死子面板的层级。
+        const baseZ = 60000;
+        const openCount = Array.from(document.querySelectorAll('.modal')).filter(m => m !== modalElement && getComputedStyle(m).display !== 'none').length;
+        const modalZ = baseZ + openCount * 10;
+        window.__modalTopZ = modalZ;
         modalElement.style.cssText = 'display: flex !important; position: fixed !important; top: 0 !important; left: 0 !important; width: 100% !important; height: 100% !important; align-items: center !important; justify-content: center !important; background-color: rgba(0, 0, 0, 0.6) !important;';
-        modalElement.style.setProperty('z-index', String(window.__modalTopZ), 'important');
+        modalElement.style.setProperty('z-index', String(modalZ), 'important');
         // 隐藏 header 和 input-area，彻底避免遮挡
         const header = document.querySelector('.header');
         if (header) header.style.visibility = 'hidden';

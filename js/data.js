@@ -248,13 +248,10 @@
     function openDrawer(drawerId) {
         var drawer = document.getElementById(drawerId);
         if (!drawer) return;
-        // 数据管理是通过 showModal 动态抬 z-index 的；抽屉如果仍用 9999，就会被压在数据管理下面。
-        // 每次打开都挪到 body 末尾，并给它比当前最高弹窗更高的层级。
+        // 抽屉统一走 90000 段，盖过数据管理主弹窗，但不使用 1e8 级别。
         if (document.body && drawer.parentElement !== document.body) document.body.appendChild(drawer);
         else if (document.body && document.body.lastElementChild !== drawer) document.body.appendChild(drawer);
-        var base = Math.max(100000400, Number(window.__modalTopZ) || 0);
-        drawer.style.setProperty('z-index', String(base + 20), 'important');
-        window.__modalTopZ = Math.max(Number(window.__modalTopZ) || 0, base + 20);
+        drawer.style.setProperty('z-index', String(window.__nextOverlayZ ? window.__nextOverlayZ() : 90010), 'important');
         drawer.classList.add('open');
         document.body.style.overflow = 'hidden';
     }

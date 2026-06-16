@@ -82,7 +82,8 @@
         window.initTransferData();
 
         var overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:60000;display:flex;align-items:flex-end;justify-content:center;animation:fadeIn 0.2s;padding-bottom:max(10px,env(safe-area-inset-bottom,0px));box-sizing:border-box;';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:90010;display:flex;align-items:flex-end;justify-content:center;animation:fadeIn 0.2s;padding-bottom:max(10px,env(safe-area-inset-bottom,0px));box-sizing:border-box;';
+        overlay.style.setProperty('z-index', String(window.__nextOverlayZ ? window.__nextOverlayZ() : 90010), 'important');
         overlay.onclick = function (e) { if (e.target === overlay) overlay.remove(); };
 
         overlay.innerHTML =
@@ -132,7 +133,8 @@
         var festival = isFestival ? festivals[0] : null;
 
         var overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:60000;display:flex;align-items:flex-end;justify-content:center;animation:fadeIn 0.2s;padding-bottom:max(10px,env(safe-area-inset-bottom,0px));box-sizing:border-box;';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:90010;display:flex;align-items:flex-end;justify-content:center;animation:fadeIn 0.2s;padding-bottom:max(10px,env(safe-area-inset-bottom,0px));box-sizing:border-box;';
+        overlay.style.setProperty('z-index', String(window.__nextOverlayZ ? window.__nextOverlayZ() : 90010), 'important');
         overlay.onclick = function (e) { if (e.target === overlay) overlay.remove(); };
 
         var quickMsgs = isFestival
@@ -335,7 +337,7 @@
         }
 
         var overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:60000;display:flex;align-items:center;justify-content:center;';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:90010;display:flex;align-items:center;justify-content:center;';
         overlay.onclick = function (e) { if (e.target === overlay) overlay.remove(); };
 
         var isPending = record.status === 'pending';
