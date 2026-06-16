@@ -14,6 +14,8 @@
     // ========== 主页绑定会话存储路由 ==========
     // 开关状态始终全局存储（不随会话变化）
     let homeSessionBindEnabled = localStorage.getItem('home_session_bind') === 'true';
+    const homeGlobalLargeCache = {};
+    const homeGlobalLargePending = {};
 
     /**
      * 获取 Home 存储键名
@@ -58,20 +60,63 @@
 
     /** 删除 Home 设置（自动路由） */
     function homeRemoveItem(key) {
-        localStorage.removeItem(homeKey(key));
+        const k = homeKey(key);
+        try { localStorage.removeItem(k); } catch(e) {}
+        if (typeof localforage !== 'undefined') {
+            localforage.removeItem(k).catch(() => {});
+        }
     }
 
-    /** 读取全局 Home 设置（不受开关影响） */
+    /** 读取全局 Home 设置（不受开关影响）：优先 localStorage，若大图只在 localforage，则异步补进缓存 */
     function homeGetGlobal(key) {
-        return localStorage.getItem(key);
+        let direct = null;
+        try { direct = localStorage.getItem(key); } catch(e) { direct = null; }
+        if (direct !== null) {
+            homeGlobalLargeCache[key] = direct;
+            return direct;
+        }
+        if (Object.prototype.hasOwnProperty.call(homeGlobalLargeCache, key)) {
+            return homeGlobalLargeCache[key];
+        }
+        if (typeof localforage !== 'undefined' && !homeGlobalLargePending[key]) {
+            homeGlobalLargePending[key] = true;
+            localforage.getItem(key).then(value => {
+                if (value !== null && value !== undefined) {
+                    homeGlobalLargeCache[key] = value;
+                    window.dispatchEvent(new CustomEvent('homeGlobalUpdated', { detail: { key, value } }));
+                }
+            }).catch(() => {}).finally(() => { homeGlobalLargePending[key] = false; });
+        }
+        return null;
+    }
+
+    async function homeGetGlobalLarge(key) {
+        // 大图/头像优先读 localforage，避免 localStorage 里残留旧图或写爆后的旧值盖住新值。
+        if (typeof localforage !== 'undefined') {
+            try {
+                const value = await localforage.getItem(key);
+                if (value !== null && value !== undefined) {
+                    homeGlobalLargeCache[key] = value;
+                    return value;
+                }
+            } catch(e) {}
+        }
+        const direct = homeGetGlobal(key);
+        if (direct !== null && direct !== undefined) return direct;
+        return null;
     }
 
     /** 写入全局 Home 设置（不受开关影响） */
     function homeSetGlobal(key, value) {
-        // 同时写入 localStorage 和 localforage，确保各模块都能读取
+        homeGlobalLargeCache[key] = value;
+        // 同时写入 localStorage 和 localforage，确保各模块都能读取；localStorage 可能因大图超限失败，localforage 才是兜底。
         try {
             localStorage.setItem(key, value);
-        } catch(e) {}
+        } catch(e) {
+            // 写大图失败时清掉旧 localStorage 值，防止下次刷新优先读到过期/裂图数据。
+            try { localStorage.removeItem(key); } catch(_) {}
+            console.warn('[Home] localStorage 全局写入失败，已保留 localforage/内存缓存:', key, e);
+        }
         if (typeof localforage !== 'undefined') {
             localforage.setItem(key, value).catch(() => {});
         }
@@ -81,6 +126,7 @@
 
     // 暴露到全局供其他模块（如朋友圈）使用
     window.homeGetGlobal = homeGetGlobal;
+    window.homeGetGlobalLarge = homeGetGlobalLarge;
     window.homeSetGlobal = homeSetGlobal;
     window.homeGetItem = homeGetItem;
     window.homeSetItem = homeSetItem;
@@ -90,7 +136,11 @@
 
     /** 删除全局 Home 设置（不受开关影响） */
     function homeRemoveGlobal(key) {
-        localStorage.removeItem(key);
+        try { localStorage.removeItem(key); } catch(e) {}
+        delete homeGlobalLargeCache[key];
+        if (typeof localforage !== 'undefined') {
+            localforage.removeItem(key).catch(() => {});
+        }
     }
 
     /** 读取预设列表（使用 localforage，支持大容量） */
@@ -482,15 +532,20 @@
         if (!file) return;
 
         const reader = new FileReader();
-        reader.onload = function(e) {
+        reader.onload = async function(e) {
             const url = e.target.result;
             const bgValue = `url(${url}) center/cover no-repeat`;
             const pageBg = document.getElementById('home-page-bg');
             if (pageBg) pageBg.style.background = bgValue;
 
             document.querySelectorAll('#page-bg-presets .bg-preset').forEach(el => el.classList.remove('active'));
-            homeSetItem('home_page_bg_custom', url);
-            homeSetItem('home_page_bg', 'custom');
+            try {
+                await homeSetLargeItem('home_page_bg_custom', url);
+                homeSetItem('home_page_bg', 'custom');
+            } catch(err) {
+                console.warn('[Home] 页面背景保存失败:', err);
+                (window.showNotification || function(){})('页面背景保存失败，图片可能太大', 'warning');
+            }
             
             // 同步到聊天界面
             syncBgToChat(bgValue);
@@ -510,7 +565,7 @@
         }
         
         // 获取当前自定义背景URL
-        let savedCustomUrl = homeGetItem('home_page_bg_custom');
+        let savedCustomUrl = await homeGetLargeItem('home_page_bg_custom');
         if (!savedCustomUrl && currentBg.includes('url(')) {
             const match = currentBg.match(/url\(["']?([^"')]+)["']?\)/);
             if (match) savedCustomUrl = match[1];
@@ -604,10 +659,10 @@
             const preset = document.createElement('div');
             preset.className = 'bg-preset bg-preset-custom';
             preset.style.background = `url(${url}) center/cover no-repeat`;
-            preset.onclick = function() {
+            preset.onclick = async function() {
                 const pageBg = document.getElementById('home-page-bg');
                 if (pageBg) pageBg.style.background = `url(${url}) center/cover no-repeat`;
-                homeSetItem('home_page_bg_custom', url);
+                await homeSetLargeItem('home_page_bg_custom', url);
                 homeSetItem('home_page_bg', 'custom');
                 document.querySelectorAll('#page-bg-presets .bg-preset').forEach(el => el.classList.remove('active'));
                 preset.classList.add('active');
@@ -843,8 +898,11 @@
             homeRemoveItem('home_page_bg');
         } else {
             pageBg.style.background = bgValue;
-            // 保存为自定义背景
-            homeSetItem('home_page_bg_custom', bgValue);
+            // 保存为自定义背景：背景可能是 dataURL，必须走大容量存储
+            let rawBgValue = bgValue;
+            const bgMatch = String(bgValue).match(/url\(["']?([^"')]+)["']?\)/);
+            if (bgMatch && bgMatch[1]) rawBgValue = bgMatch[1];
+            homeSetLargeItem('home_page_bg_custom', rawBgValue).catch(e => console.warn('[Home] 同步页面背景保存失败:', e));
             homeSetItem('home_page_bg', 'custom');
         }
     };
@@ -1866,10 +1924,15 @@
         // 页面背景
         const savedPageBg = homeGetItem('home_page_bg');
         if (savedPageBg === 'custom') {
-            const customUrl = homeGetItem('home_page_bg_custom');
+            const customUrl = await homeGetLargeItem('home_page_bg_custom');
             if (customUrl) {
                 const pageBg = document.getElementById('home-page-bg');
-                if (pageBg) pageBg.style.background = `url(${customUrl}) center/cover no-repeat`;
+                if (pageBg) {
+                    const bgValue = /^url\(/.test(customUrl) || /gradient\(/.test(customUrl)
+                        ? customUrl
+                        : `url(${customUrl}) center/cover no-repeat`;
+                    pageBg.style.background = bgValue;
+                }
             }
         } else if (savedPageBg && pageBgPresets[savedPageBg]) {
             window.setPageBg(savedPageBg);

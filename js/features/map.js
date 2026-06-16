@@ -337,40 +337,65 @@
     var _meAvatarImg = null;
     var _taAvatarImg = null;
 
-    // 加载头像图片
+    function applyAvatarImage(who, url) {
+        if (!url || typeof url !== 'string') return;
+        if (url.indexOf('blob:') === 0) return; // blob 只在本次页面有效，不能当持久头像
+        var isMe = who === 'me';
+        if (isMe && url === _meAvatarSrc) return;
+        if (!isMe && url === _taAvatarSrc) return;
+
+        if (isMe) _meAvatarSrc = url;
+        else _taAvatarSrc = url;
+
+        var img = new Image();
+        // dataURL 不需要跨域；远程图才设置 anonymous，避免个别浏览器把 dataURL 当跨域失败。
+        if (/^https?:\/\//.test(url)) img.crossOrigin = 'anonymous';
+        img.onload = function () {
+            if (isMe) _meAvatarImg = img;
+            else _taAvatarImg = img;
+        };
+        img.onerror = function () {
+            // 头像加载失败不影响地图功能，但清掉本次失败源，下一轮可以继续尝试别的兜底。
+            if (isMe && _meAvatarSrc === url) _meAvatarSrc = null;
+            if (!isMe && _taAvatarSrc === url) _taAvatarSrc = null;
+        };
+        img.src = url;
+    }
+
+    function readAvatarSync(who) {
+        var key = 'home_avatar_' + who;
+        var url = '';
+        try {
+            if (window.settings) {
+                url = who === 'me' ? (window.settings.myAvatar || '') : (window.settings.partnerAvatar || '');
+            }
+            if (!url && typeof window.homeGetGlobal === 'function') url = window.homeGetGlobal(key) || '';
+            if (!url && typeof window.homeGetItem === 'function') url = window.homeGetItem(key) || '';
+            if (!url) url = localStorage.getItem(key) || '';
+        } catch (e) {}
+        return url;
+    }
+
+    function readAvatarLarge(who) {
+        var key = 'home_avatar_' + who;
+        var tasks = [];
+        if (typeof window.homeGetGlobalLarge === 'function') tasks.push(window.homeGetGlobalLarge(key));
+        if (typeof window.homeGetLargeItem === 'function') tasks.push(window.homeGetLargeItem(key));
+        if (!tasks.length && typeof localforage !== 'undefined') tasks.push(localforage.getItem(key));
+        tasks.forEach(function (task) {
+            Promise.resolve(task).then(function (url) {
+                if (url) applyAvatarImage(who, url);
+            }).catch(function () {});
+        });
+    }
+
+    // 加载头像图片：同时兼容聊天设置、Home 全局键、Home 会话键、localforage 大图兜底
     function loadAvatars() {
         try {
-            var meUrl = null;
-            var taUrl = null;
-
-            // 我的头像：从 Home 页全局存储读取
-            if (typeof window.homeGetGlobal === 'function') {
-                meUrl = window.homeGetGlobal('home_avatar_me');
-            }
-
-            // TA/梦角头像：从 Home 页全局存储读取
-            if (typeof window.homeGetGlobal === 'function') {
-                taUrl = window.homeGetGlobal('home_avatar_partner');
-            }
-
-            if (meUrl && meUrl !== _meAvatarSrc) {
-                _meAvatarSrc = meUrl;
-                (function (url) {
-                    var img = new Image();
-                    img.crossOrigin = 'anonymous';
-                    img.onload = function () { _meAvatarImg = img; };
-                    img.src = url;
-                })(meUrl);
-            }
-            if (taUrl && taUrl !== _taAvatarSrc) {
-                _taAvatarSrc = taUrl;
-                (function (url) {
-                    var img = new Image();
-                    img.crossOrigin = 'anonymous';
-                    img.onload = function () { _taAvatarImg = img; };
-                    img.src = url;
-                })(taUrl);
-            }
+            applyAvatarImage('me', readAvatarSync('me'));
+            applyAvatarImage('partner', readAvatarSync('partner'));
+            readAvatarLarge('me');
+            readAvatarLarge('partner');
         } catch (e) {
             // 头像加载失败不影响地图功能
         }
@@ -2614,6 +2639,13 @@
     }
 
     var _avatarCheckTimer = null;
+
+    window.addEventListener('homeGlobalUpdated', function (e) {
+        try {
+            if (!e || !e.detail) return;
+            if (e.detail.key === 'home_avatar_me' || e.detail.key === 'home_avatar_partner') loadAvatars();
+        } catch (err) {}
+    });
     var _taMoveTimer = null;
 
     function getNextMoveInterval() {

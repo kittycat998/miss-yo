@@ -333,6 +333,22 @@ const loadData = async () => {
             localforage.getItem(getStorageKey('customStatusGroups'))
         ]);
         const getVal = (index) => results[index].status === 'fulfilled' ? results[index].value : null;
+        const safeLfGet = async (baseKey) => {
+            const fullKey = getStorageKey(baseKey);
+            try {
+                const value = await localforage.getItem(fullKey);
+                if (value !== null && value !== undefined) return value;
+            } catch (e) {
+                console.warn('[loadData] localforage 读取失败，尝试 localStorage 兜底:', baseKey, e);
+            }
+            try {
+                const raw = localStorage.getItem(fullKey);
+                if (raw === null || raw === undefined) return null;
+                try { return JSON.parse(raw); } catch (_) { return raw; }
+            } catch (e) {
+                return null;
+            }
+        };
 
         const savedSettings = getVal(0);
         const savedMessages = getVal(1);
@@ -356,19 +372,19 @@ const loadData = async () => {
         const savedPokeGroups = getVal(19);
         const savedStatusGroups = getVal(20);
 
-        const savedMyPokes = await localforage.getItem(getStorageKey('myPokes'));
-        const savedKaomojiLibrary = await localforage.getItem(getStorageKey('kaomojiLibrary'));
-        const savedKaomojiGroups = await localforage.getItem(getStorageKey('kaomojiGroups'));
-        const savedStickerGroups = await localforage.getItem(getStorageKey('customStickerGroups'));
-        const savedMoyuRecords = await localforage.getItem(getStorageKey('moyuRecords'));
-        const savedMoyuLocations = await localforage.getItem(getStorageKey('moyuLocations'));
-        const savedMoyuActivities = await localforage.getItem(getStorageKey('moyuActivities'));
-        const savedCurrentMoyuRecord = await localforage.getItem(getStorageKey('currentMoyuRecord'));
-        const savedMoyuUnread = await localforage.getItem(getStorageKey('moyuUnread'));
-        const savedMoyuWorkSession = await localforage.getItem(getStorageKey('moyuWorkSession'));
-        const savedTransferData = await localforage.getItem(getStorageKey('transferData'));
-        const savedVoices = await localforage.getItem(getStorageKey('customVoices'));
-        const savedVoiceGroups = await localforage.getItem(getStorageKey('customVoiceGroups'));
+        const savedMyPokes = await safeLfGet('myPokes');
+        const savedKaomojiLibrary = await safeLfGet('kaomojiLibrary');
+        const savedKaomojiGroups = await safeLfGet('kaomojiGroups');
+        const savedStickerGroups = await safeLfGet('customStickerGroups');
+        const savedMoyuRecords = await safeLfGet('moyuRecords');
+        const savedMoyuLocations = await safeLfGet('moyuLocations');
+        const savedMoyuActivities = await safeLfGet('moyuActivities');
+        const savedCurrentMoyuRecord = await safeLfGet('currentMoyuRecord');
+        const savedMoyuUnread = await safeLfGet('moyuUnread');
+        const savedMoyuWorkSession = await safeLfGet('moyuWorkSession');
+        const savedTransferData = await safeLfGet('transferData');
+        const savedVoices = await safeLfGet('customVoices');
+        const savedVoiceGroups = await safeLfGet('customVoiceGroups');
 
         if (savedPartnerPersonas) partnerPersonas = savedPartnerPersonas;
 
@@ -692,8 +708,8 @@ const saveData = async () => {
         { key: 'customVoiceGroups',       val: () => _safeSetPreserveNonEmpty('customVoiceGroups', window.customVoiceGroups || []) },
         { key: 'kaomojiLibrary',          val: () => _safeSetPreserveNonEmpty('kaomojiLibrary', kaomojiLibrary || []) },
         { key: 'moyuRecords',             val: () => localforage.setItem(getStorageKey('moyuRecords'), moyuRecords || []) },
-        { key: 'moyuLocations',           val: () => localforage.setItem(getStorageKey('moyuLocations'), moyuLocations || []) },
-        { key: 'moyuActivities',          val: () => localforage.setItem(getStorageKey('moyuActivities'), window.moyuActivities || []) },
+        { key: 'moyuLocations',           val: () => _safeSetPreserveNonEmpty('moyuLocations', moyuLocations || []) },
+        { key: 'moyuActivities',          val: () => _safeSetPreserveNonEmpty('moyuActivities', window.moyuActivities || []) },
         { key: 'currentMoyuRecord',       val: () => localforage.setItem(getStorageKey('currentMoyuRecord'), window.currentMoyuRecord || null) },
         { key: 'moyuUnread',              val: () => localforage.setItem(getStorageKey('moyuUnread'), moyuUnread || false) },
         { key: 'moyuWorkSession',         val: () => localforage.setItem(getStorageKey('moyuWorkSession'), window.moyuWorkSession || null) },
