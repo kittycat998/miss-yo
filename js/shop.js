@@ -826,6 +826,9 @@
             console.error('[Shop] buy saveData error:', e);
         }
         updateBalanceDisplay();
+        if (target === 'dream') {
+            sendDreamGiftMessage(product, state.modalQty, total, remark, selectedSpecs.join(' | '));
+        }
         alert(target === 'dream' ? '已给梦角购买！' : '购买成功！');
         closeProductModal();
     }
@@ -904,11 +907,10 @@
                     time: Date.now(),
                     replies: order.replies
                 });
+                sendDreamGiftMessage(product, order.qty || state.modalQty, product.price * (order.qty || state.modalQty || 1), remark, '');
             }
             await saveData();
         }, minutes * 60000);
-
-        alert(`已预订，将在 ${minutes} 分钟后送达`);
     }
 
     // ========== 购物车结算 ==========
@@ -1103,6 +1105,48 @@
             return pool[Math.floor(Math.random() * pool.length)];
         }
         return '这个好适合你！';
+    }
+
+
+    function sendDreamGiftMessage(product, qty, total, remark, specsText) {
+        if (!product || typeof addMessage !== 'function') return;
+        const ts = Date.now();
+        const giftTag = '🎁 已送给TA';
+        const cardProduct = Object.assign({}, product, { price: total });
+        const descParts = ['送给你的礼物'];
+        if (qty && qty > 1) descParts.push('x' + qty);
+        if (specsText) descParts.push(specsText);
+        if (remark) descParts.push(remark);
+        addMessage({
+            id: 'gift_buy_' + ts,
+            sender: 'user',
+            text: `送给你的礼物：${product.name || '商品'}`,
+            timestamp: new Date(),
+            status: 'sent',
+            type: 'share',
+            shareData: {
+                name: product.name,
+                price: total,
+                total: total,
+                icon: product.icon,
+                img: product.img,
+                tag: giftTag,
+                tagColor: '#ff6b9d',
+                desc: descParts.join(' · ')
+            }
+        });
+        setTimeout(() => {
+            if (typeof addMessage === 'function') {
+                addMessage({
+                    id: 'gift_reply_' + Date.now(),
+                    sender: 'ta',
+                    text: getRandomReply(),
+                    timestamp: new Date(),
+                    status: 'received',
+                    type: 'normal'
+                });
+            }
+        }, 1500 + Math.random() * 2000);
     }
 
     function shareProduct() {

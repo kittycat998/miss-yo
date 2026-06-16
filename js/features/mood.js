@@ -257,6 +257,153 @@ function toggleBatchFavoriteMode() {
             ctx.restore();
         }
 
+
+        function _shotBubbleRadius(isUser) {
+            var style = (window.settings && settings.bubbleStyle) || 'standard';
+            if (style === 'square') return 8;
+            if (style === 'rounded-large') return 28;
+            return 16;
+        }
+
+        function _shotDrawBubblePath(ctx, x, y, w, h, isUser) {
+            var style = (window.settings && settings.bubbleStyle) || 'standard';
+            if (style === 'square' || style === 'rounded-large' || style === 'rounded') {
+                _shotRoundRect(ctx, x, y, w, h, _shotBubbleRadius(isUser));
+                return;
+            }
+            // 对齐聊天区默认气泡：整体圆角，发送/接收底角收小。
+            var r = 16, small = 6;
+            var rtl = r, rtr = r, rbr = isUser ? small : r, rbl = isUser ? r : small;
+            ctx.beginPath();
+            ctx.moveTo(x + rtl, y);
+            ctx.lineTo(x + w - rtr, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + rtr);
+            ctx.lineTo(x + w, y + h - rbr);
+            ctx.quadraticCurveTo(x + w, y + h, x + w - rbr, y + h);
+            ctx.lineTo(x + rbl, y + h);
+            ctx.quadraticCurveTo(x, y + h, x, y + h - rbl);
+            ctx.lineTo(x, y + rtl);
+            ctx.quadraticCurveTo(x, y, x + rtl, y);
+            ctx.closePath();
+        }
+
+        function _shotEllipsis(ctx, text, maxWidth) {
+            text = String(text || '');
+            if (ctx.measureText(text).width <= maxWidth) return text;
+            var ell = '…';
+            while (text && ctx.measureText(text + ell).width > maxWidth) text = text.slice(0, -1);
+            return text ? text + ell : ell;
+        }
+
+        function _shotReplyInfo(msg, ctx, maxWidth) {
+            if (!msg || !msg.replyTo) return null;
+            var r = msg.replyTo || {};
+            var sender = r.sender === 'user' ? (settings.myName || '我') : (settings.partnerName || r.sender || '对方');
+            var text = r.text || (r.image ? '🖼 图片' : (r.type === 'red-packet' ? '🧧 红包' : (r.shareData ? '🎁 礼物/商品' : '[消息]')));
+            ctx.font = '12px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif';
+            var lines = _shotWrapText(ctx, text, Math.max(80, maxWidth - 22)).slice(0, 2);
+            if (!lines.length) lines = ['[消息]'];
+            return { sender: sender, text: text, lines: lines, h: 22 + lines.length * 16, w: maxWidth };
+        }
+
+        function _shotDrawReplyBlock(ctx, x, y, w, reply, isUser, colors) {
+            if (!reply) return;
+            ctx.save();
+            _shotRoundRect(ctx, x, y, w, reply.h, 8);
+            ctx.fillStyle = isUser ? 'rgba(255,255,255,.18)' : 'rgba(0,0,0,.055)';
+            ctx.fill();
+            ctx.fillStyle = isUser ? 'rgba(255,255,255,.76)' : (_shotGetCssVar('--accent-color', '#8b7cf6') || '#8b7cf6');
+            ctx.fillRect(x, y, 3, reply.h);
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'alphabetic';
+            ctx.font = '600 11px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
+            ctx.fillStyle = isUser ? (colors.sentText || '#fff') : (_shotGetCssVar('--accent-color', '#8b7cf6') || '#8b7cf6');
+            ctx.globalAlpha = isUser ? .92 : 1;
+            ctx.fillText(_shotEllipsis(ctx, reply.sender || '对方', w - 18), x + 10, y + 15);
+            ctx.globalAlpha = isUser ? .78 : .82;
+            ctx.font = '12px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif';
+            ctx.fillStyle = isUser ? (colors.sentText || '#fff') : (colors.subColor || '#777');
+            var ty = y + 31;
+            reply.lines.forEach(function(line) {
+                ctx.fillText(_shotEllipsis(ctx, line || '', w - 18), x + 10, ty);
+                ty += 16;
+            });
+            ctx.restore();
+        }
+
+        function _shotShopCardInfo(msg) {
+            if (!msg) return null;
+            var data = msg.shareData || null;
+            var isShop = msg.type === 'share' || msg.type === 'pay-request' || data;
+            if (!isShop) return null;
+            data = data || {};
+            var isPay = msg.type === 'pay-request';
+            var name = data.name || msg.shopName || '商品';
+            var price = data.total || data.price || msg.shopPrice || '';
+            var tag = data.tag || (isPay ? '💝 已帮TA付' : '好物分享');
+            var desc = data.desc || (isPay ? '帮我买这个好不好~' : name);
+            return {
+                name: String(name || '商品'),
+                price: String(price || ''),
+                icon: String(data.icon || msg.icon || '📦'),
+                img: String(data.img || msg.img || ''),
+                tag: String(tag || ''),
+                tagColor: String(data.tagColor || (isPay ? '#ff8a3d' : '#ff4757')),
+                desc: String(desc || '')
+            };
+        }
+
+        function _shotDrawShopCard(ctx, x, y, w, h, info, img, isUser) {
+            info = info || _shotShopCardInfo({}) || { name: '商品', price: '', icon: '📦', tag: '好物分享', desc: '商品' };
+            ctx.save();
+            _shotRoundRect(ctx, x, y, w, h, 12);
+            ctx.fillStyle = '#fff';
+            ctx.fill();
+            ctx.strokeStyle = '#ffe0e0';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            var thumb = 52;
+            var tx = x + 10, ty = y + Math.max(8, Math.round((h - thumb) / 2));
+            _shotRoundRect(ctx, tx, ty, thumb, thumb, 7);
+            ctx.fillStyle = '#f0f0f0';
+            ctx.fill();
+            if (img) {
+                ctx.save();
+                _shotRoundRect(ctx, tx, ty, thumb, thumb, 7);
+                ctx.clip();
+                ctx.drawImage(img, tx, ty, thumb, thumb);
+                ctx.restore();
+            } else {
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.font = '26px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
+                ctx.fillStyle = '#555';
+                ctx.fillText(info.icon || '📦', tx + thumb / 2, ty + thumb / 2 + 1);
+            }
+            var cx = tx + thumb + 10;
+            var maxText = w - (cx - x) - 10;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'alphabetic';
+            ctx.fillStyle = '#666';
+            ctx.font = '12px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
+            ctx.fillText(_shotEllipsis(ctx, info.desc || info.name || '商品', maxText), cx, y + 23);
+            ctx.fillStyle = '#333';
+            ctx.font = '600 12px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
+            if ((info.desc || '') !== (info.name || '')) ctx.fillText(_shotEllipsis(ctx, info.name || '商品', maxText), cx, y + 39);
+            ctx.fillStyle = '#ff4757';
+            ctx.font = '700 13px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
+            ctx.fillText('¥' + (info.price || ''), cx, y + 56);
+            var tagText = info.tag || '好物分享';
+            ctx.font = '10px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
+            var tagW = Math.min(maxText, ctx.measureText(tagText).width + 12);
+            _shotRoundRect(ctx, cx, y + h - 20, tagW, 14, 7);
+            ctx.fillStyle = info.tagColor || '#ff4757';
+            ctx.fill();
+            ctx.fillStyle = '#fff';
+            ctx.fillText(_shotEllipsis(ctx, tagText, tagW - 8), cx + 6, y + h - 9);
+            ctx.restore();
+        }
+
         function _shotLoadImage(src) {
             return new Promise(function(resolve) {
                 if (!src) return resolve(null);
@@ -275,7 +422,10 @@ function toggleBatchFavoriteMode() {
                 var msg = list[i];
                 var img = null;
                 if (msg.image) img = await _shotLoadImage(msg.image);
-                prepared.push({ msg: msg, img: img });
+                var shopInfo = _shotShopCardInfo(msg);
+                var shopImg = null;
+                if (shopInfo && shopInfo.img) shopImg = await _shotLoadImage(shopInfo.img);
+                prepared.push({ msg: msg, img: img, shopInfo: shopInfo, shopImg: shopImg });
             }
             return prepared;
         }
@@ -300,13 +450,27 @@ function toggleBatchFavoriteMode() {
                     prevMsg = msg;
                     return;
                 }
+
+                var reply = _shotReplyInfo(msg, ctx, maxBubbleW - padX * 2);
+                var replyExtraH = reply ? (reply.h + 7) : 0;
+
                 if (msg.type === 'red-packet' && msg.redPacket) {
                     var rpInfo = _shotRedPacketInfo(msg);
                     var rpW = 220, rpH = 112;
-                    items.push({ type: 'message', msg: msg, img: null, lines: [], bubbleW: rpW, bubbleH: rpH, imageW: 0, imageH: 0, redPacket: true, redPacketInfo: rpInfo, h: Math.max(44, rpH + 26) + 10 });
+                    var rpBubbleH = replyExtraH + rpH;
+                    items.push({ type: 'message', msg: msg, img: null, lines: [], bubbleW: rpW, bubbleH: rpBubbleH, imageW: 0, imageH: 0, redPacket: true, redPacketInfo: rpInfo, reply: reply, cardH: rpH, h: Math.max(44, rpBubbleH + 26) + 10 });
                     prevMsg = msg;
                     return;
                 }
+
+                if (item.shopInfo) {
+                    var shopW = 240, shopH = 78;
+                    var shopBubbleH = replyExtraH + shopH;
+                    items.push({ type: 'message', msg: msg, img: null, shopCard: true, shopInfo: item.shopInfo, shopImg: item.shopImg, reply: reply, bubbleW: shopW, bubbleH: shopBubbleH, imageW: 0, imageH: 0, h: Math.max(44, shopBubbleH + 26) + 10 });
+                    prevMsg = msg;
+                    return;
+                }
+
                 ctx.font = '15px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif';
                 var lines = _shotWrapText(ctx, msg.text || '', maxBubbleW - padX * 2);
                 if (!msg.text) lines = [];
@@ -322,17 +486,17 @@ function toggleBatchFavoriteMode() {
                         imageW = 110; imageH = 82;
                     }
                 }
-                var bubbleW = Math.max(50, Math.min(maxBubbleW, Math.max(
-                    lines.reduce(function(m,l){ return Math.max(m, ctx.measureText(l).width); }, 0) + padX * 2,
-                    imageW ? imageW + (lines.length ? padX * 2 : 0) : 0
-                )));
+                var textW = lines.reduce(function(m,l){ return Math.max(m, ctx.measureText(l).width); }, 0) + padX * 2;
+                var imageBoxW = imageW ? imageW + (lines.length || reply ? padX * 2 : 0) : 0;
+                var replyBoxW = reply ? Math.min(maxBubbleW, reply.w + padX * 2) : 0;
+                var bubbleW = Math.max(50, Math.min(maxBubbleW, Math.max(textW, imageBoxW, replyBoxW)));
                 var bubbleH;
-                if (lines.length && imageH) bubbleH = padY * 2 + textH + 7 + imageH;
-                else if (lines.length) bubbleH = padY * 2 + textH;
-                else if (imageH) bubbleH = imageH;
-                else bubbleH = 36;
+                if (lines.length && imageH) bubbleH = padY * 2 + replyExtraH + textH + 7 + imageH;
+                else if (lines.length) bubbleH = padY * 2 + replyExtraH + textH;
+                else if (imageH) bubbleH = replyExtraH + imageH;
+                else bubbleH = replyExtraH + 36;
                 var h = Math.max(44, bubbleH + 26) + 10;
-                items.push({ type: 'message', msg: msg, img: item.img, lines: lines, bubbleW: bubbleW, bubbleH: bubbleH, imageW: imageW, imageH: imageH, h: h });
+                items.push({ type: 'message', msg: msg, img: item.img, lines: lines, bubbleW: bubbleW, bubbleH: bubbleH, imageW: imageW, imageH: imageH, reply: reply, h: h });
                 prevMsg = msg;
             });
             return items;
@@ -465,9 +629,19 @@ function toggleBatchFavoriteMode() {
 
                 var bubbleX = isUser ? (avX - 9 - it.bubbleW) : (avX + avSize + 9);
                 var bubbleY = y;
+                var colors = { sentText: sentText, subColor: subColor };
+                var innerY = bubbleY;
+                if (it.redPacket || it.shopCard) {
+                    if (it.reply) {
+                        _shotDrawReplyBlock(ctx, bubbleX, innerY, it.bubbleW, it.reply, isUser, colors);
+                        innerY += it.reply.h + 7;
+                    }
+                }
                 if (it.redPacket) {
-                    _shotDrawRedPacket(ctx, bubbleX, bubbleY, it.bubbleW, it.bubbleH, isUser, it.redPacketInfo || _shotRedPacketInfo(msg));
-                } else if (msg.image && !it.lines.length) {
+                    _shotDrawRedPacket(ctx, bubbleX, innerY, it.bubbleW, it.cardH || 112, isUser, it.redPacketInfo || _shotRedPacketInfo(msg));
+                } else if (it.shopCard) {
+                    _shotDrawShopCard(ctx, bubbleX, innerY, it.bubbleW, 78, it.shopInfo, it.shopImg, isUser);
+                } else if (msg.image && !it.lines.length && !it.reply) {
                     if (it.img) {
                         _shotRoundRect(ctx, bubbleX, bubbleY, it.imageW, it.imageH, 12);
                         ctx.save(); ctx.clip();
@@ -483,10 +657,14 @@ function toggleBatchFavoriteMode() {
                         ctx.fillText('图片加载失败', bubbleX + it.imageW/2, bubbleY + it.imageH/2 + 4);
                     }
                 } else {
-                    _shotRoundRect(ctx, bubbleX, bubbleY, it.bubbleW, it.bubbleH, 16);
+                    _shotDrawBubblePath(ctx, bubbleX, bubbleY, it.bubbleW, it.bubbleH, isUser);
                     ctx.fillStyle = isUser ? sentBg : receivedBg;
                     ctx.fill();
                     var tx = bubbleX + 14, ty = bubbleY + 24;
+                    if (it.reply) {
+                        _shotDrawReplyBlock(ctx, bubbleX + 10, bubbleY + 10, it.bubbleW - 20, it.reply, isUser, colors);
+                        ty = bubbleY + 10 + it.reply.h + 7 + 18;
+                    }
                     ctx.textAlign = 'left';
                     ctx.fillStyle = isUser ? sentText : receivedText;
                     ctx.font = '15px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif';
@@ -495,7 +673,7 @@ function toggleBatchFavoriteMode() {
                         ty += 21;
                     });
                     if (msg.image) {
-                        var imgX = tx, imgY = bubbleY + 10 + (it.lines.length ? it.lines.length * 21 + 7 : 0);
+                        var imgX = tx, imgY = bubbleY + 10 + (it.reply ? it.reply.h + 7 : 0) + (it.lines.length ? it.lines.length * 21 + 7 : 0);
                         if (it.img) {
                             _shotRoundRect(ctx, imgX, imgY, it.imageW, it.imageH, 10);
                             ctx.save(); ctx.clip();
