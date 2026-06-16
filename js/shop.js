@@ -835,8 +835,24 @@
 
     // ========== 预订 ==========
     function showBookingModal() {
-        closeProductModal();
-        document.getElementById('shop-booking-modal').classList.add('active');
+        // 不能调用 closeProductModal()：它会把 state.currentProduct 清空，
+        // 导致预订弹窗里的“给自己买 / 给梦角买”点击后直接 return，看起来像按钮失效。
+        const product = state.currentProduct;
+        const qty = state.modalQty || 1;
+        if (!product) {
+            showToast('请先选择商品');
+            return;
+        }
+        const productModal = document.getElementById('shop-product-modal');
+        if (productModal) productModal.classList.remove('active');
+        state.currentProduct = product;
+        state.modalQty = qty;
+        state.bookingMinutes = null;
+        const minutesInput = document.getElementById('shop-booking-minutes');
+        if (minutesInput) minutesInput.value = '';
+        document.querySelectorAll('#shop-booking-modal .spec-option').forEach(o => o.classList.remove('active'));
+        const bookingModal = document.getElementById('shop-booking-modal');
+        if (bookingModal) bookingModal.classList.add('active');
     }
 
     function closeBookingModal() {
@@ -851,13 +867,19 @@
     }
 
     async function bookingBuy(target) {
-        const customMinutes = document.getElementById('shop-booking-minutes').value;
-        const minutes = state.bookingMinutes || parseInt(customMinutes) || 5;
+        const customMinutesEl = document.getElementById('shop-booking-minutes');
+        const customMinutes = customMinutesEl ? customMinutesEl.value : '';
+        const minutes = state.bookingMinutes || parseInt(customMinutes, 10) || 5;
 
-        if (!state.currentProduct) return;
+        if (!state.currentProduct) {
+            showToast('预订商品丢失，请重新打开商品');
+            return;
+        }
         const product = state.currentProduct;
-        const remark = document.getElementById('shop-modal-remark').value.trim();
-        const total = product.price * state.modalQty;
+        const qty = state.modalQty || 1;
+        const remarkEl = document.getElementById('shop-modal-remark');
+        const remark = remarkEl ? remarkEl.value.trim() : '';
+        const total = product.price * qty;
 
         if (state.balance < total) {
             alert('余额不足');
@@ -871,7 +893,7 @@
             productId: product.id,
             name: product.name,
             price: product.price,
-            qty: state.modalQty,
+            qty: qty,
             icon: product.icon,
             specs: '',
             remark: remark,
@@ -892,24 +914,33 @@
         alert(`已预订，将在 ${minutes} 分钟后送达`);
         closeBookingModal();
         setTimeout(async () => {
-            order.status = 'completed';
-            order.replies = generateReplies();
+            const liveOrder = state.orders.find(o => o.id === order.id) || order;
+            if (!liveOrder || liveOrder.status !== 'pending') return;
+            liveOrder.status = 'completed';
+            liveOrder.replies = generateReplies();
             if (target === 'dream') {
                 state.giftCabinet.unshift({
-                    orderId: order.id,
+                    orderId: liveOrder.id,
                     name: product.name,
                     icon: product.icon,
                     img: product.img,
                     price: product.price,
-                    qty: state.modalQty,
+                    qty: qty,
                     specs: '',
                     remark: remark,
                     time: Date.now(),
-                    replies: order.replies
+                    replies: liveOrder.replies
                 });
-                sendDreamGiftMessage(product, order.qty || state.modalQty, product.price * (order.qty || state.modalQty || 1), remark, '');
+                sendDreamGiftMessage(product, qty, product.price * qty, remark, '');
+            } else if (window.GiftCabinetApp) {
+                window.GiftCabinetApp.add(product, qty, '预订送达', liveOrder.id);
             }
-            await saveData();
+            try {
+                await saveData();
+            } catch (e) {
+                console.error('[Shop] booking delivery saveData error:', e);
+            }
+            renderOrders();
         }, minutes * 60000);
     }
 

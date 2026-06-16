@@ -65,6 +65,7 @@ function toggleBatchFavoriteMode() {
             var willOpen = !window.isScreenshotSelectMode;
             window.isScreenshotSelectMode = willOpen;
             selectedMessages = [];
+            var anchorMessageId = (initialMessageId !== undefined && initialMessageId !== null && String(initialMessageId) !== '') ? String(initialMessageId) : '';
 
             if (window.isScreenshotSelectMode) {
                 isBatchFavoriteMode = false;
@@ -72,8 +73,8 @@ function toggleBatchFavoriteMode() {
                 document.body.classList.add('screenshot-select-mode');
                 hideBatchFavoriteActions();
                 showScreenshotSelectActions();
-                if (initialMessageId !== undefined && initialMessageId !== null && String(initialMessageId) !== '') {
-                    selectedMessages.push(String(initialMessageId));
+                if (anchorMessageId) {
+                    selectedMessages.push(anchorMessageId);
                 }
                 showNotification('多选截图已开启，点圆圈选择消息', 'info');
             } else {
@@ -85,10 +86,28 @@ function toggleBatchFavoriteMode() {
 
             renderMessages(true);
             requestAnimationFrame(function() {
+                var anchorWrapper = null;
                 selectedMessages.forEach(function(id) {
                     var wrapper = document.querySelector('.message-wrapper[data-id="' + id + '"], .selectable-special-message[data-id="' + id + '"]');
-                    if (wrapper) wrapper.classList.add('selected');
+                    if (wrapper) {
+                        wrapper.classList.add('selected');
+                        if (anchorMessageId && String(id) === String(anchorMessageId)) anchorWrapper = wrapper;
+                    }
                 });
+                // 从某条消息点“截图”进入多选时，不要重渲染后跳到聊天顶部；把视口停回这条消息附近。
+                if (willOpen && anchorWrapper) {
+                    var container = (typeof DOMElements !== 'undefined' && DOMElements.chatContainer) ? DOMElements.chatContainer : document.getElementById('chat-container');
+                    if (container) {
+                        requestAnimationFrame(function() {
+                            try {
+                                var targetTop = anchorWrapper.offsetTop - Math.max(80, Math.round(container.clientHeight * 0.38));
+                                container.scrollTop = Math.max(0, targetTop);
+                            } catch(e) {
+                                try { anchorWrapper.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch(_) {}
+                            }
+                        });
+                    }
+                }
                 if (typeof window.updateScreenshotSelectCount === 'function') window.updateScreenshotSelectCount();
             });
         }
