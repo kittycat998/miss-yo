@@ -15234,3 +15234,19 @@ body::before{
     -webkit-overflow-scrolling:touch !important;
     padding-bottom:calc(24px + env(safe-area-inset-bottom, 0px)) !important;
 }
+
+
+/* safe3: 心情手帐日期详情/编辑层必须压在主弹窗上方 */
+#mood-selector-overlay.mood-selector-overlay {
+    z-index:70080 !important;
+    position:fixed !important;
+    inset:0 !important;
+}
+#mood-selector-overlay .mood-selector-card,
+#mood-selector-overlay .day-detail-card {
+    z-index:70081 !important;
+    position:relative !important;
+}
+#mood-selector-overlay #custom-mood-dialog {
+    z-index:70082 !important;
+}

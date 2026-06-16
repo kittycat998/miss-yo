@@ -936,32 +936,13 @@
 
   // ========== Time Formatting ==========
   function formatMomentTime(timestamp) {
-    if (typeof timestamp === 'string') return timestamp;
-    
-    const now = Date.now();
-    const diff = now - timestamp;
-    
-    // 小于1分钟
-    if (diff < 60000) {
-      return '刚刚';
-    }
-    // 小于1小时
-    if (diff < 3600000) {
-      return Math.floor(diff / 60000) + '分钟前';
-    }
-    // 小于24小时
-    if (diff < 86400000) {
-      return Math.floor(diff / 3600000) + '小时前';
-    }
-    // 小于7天
-    if (diff < 604800000) {
-      return Math.floor(diff / 86400000) + '天前';
-    }
-    // 超过7天显示日期
-    const date = new Date(timestamp);
-    const month = date.getMonth() + 1;
-    const day = date.getDate();
-    return `${month}月${day}日`;
+    // 朋友圈时间改成具体日期时间，避免“刚刚/几小时前”看不出是哪一天发的。
+    const raw = (typeof timestamp === 'string' && /^\d+$/.test(timestamp)) ? Number(timestamp) : timestamp;
+    if (typeof raw === 'string') return raw;
+    const date = new Date(Number(raw));
+    if (!Number.isFinite(date.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${pad(date.getHours())}:${pad(date.getMinutes())}`;
   }
 
   let editingCommentMomentId = null;
@@ -973,7 +954,13 @@
     if (!Array.isArray(m.comments)) m.comments = [];
     normalizeMomentComments(m);
     if (!Array.isArray(m.mentions)) m.mentions = [];
-    const displayAvatar = isValidAvatar(m.avatar) ? m.avatar : userConfig.avatar;
+    // 发过的朋友圈头像不再固定吃旧快照：自己的动态跟随当前朋友圈头像，梦角动态跟随当前梦角头像；普通好友仍保留发布时头像。
+    let displayAvatar = isValidAvatar(m.avatar) ? m.avatar : userConfig.avatar;
+    if (m.author === 'me' && isValidAvatar(userConfig.avatar)) {
+      displayAvatar = userConfig.avatar;
+    } else if ((m.author === 'partner' || m.authorId === 'partner') && isValidAvatar(getPartnerAvatar())) {
+      displayAvatar = getPartnerAvatar();
+    }
     const displayNickname = isValidProfileValue(m.nickname) ? m.nickname : userConfig.name;
     const displayIdentity = isValidProfileValue(m.identity) ? m.identity : '';
     const displayText = isValidProfileValue(m.text) ? m.text : '';
@@ -2110,15 +2097,44 @@
   const VISITOR_LAST_VIEWED_KEY = 'moments_visitor_last_viewed_count';
   const VISITOR_MAX_PER_DAY = 10;
 
+  function visitorGet(key) {
+    try {
+      const scoped = momentsGet(key);
+      if (scoped !== null && scoped !== undefined) return scoped;
+      return localStorage.getItem(key);
+    } catch (e) {
+      try { return localStorage.getItem(key); } catch (_) { return null; }
+    }
+  }
+
+  function visitorSet(key, value) {
+    try { momentsSet(key, value); }
+    catch (e) { try { localStorage.setItem(key, value); } catch (_) {} }
+  }
+
+  function migrateVisitorLegacyKey(key) {
+    try {
+      const scoped = momentsGet(key);
+      const legacy = localStorage.getItem(key);
+      if ((scoped === null || scoped === undefined) && legacy !== null && legacy !== undefined) {
+        momentsSet(key, legacy);
+      }
+    } catch (e) {}
+  }
+
   let visitorRecords = [];
   let visitorUnreadCount = 0;
   let visitorTimerInterval = null;
 
   function loadVisitorRecords() {
     try {
-      const data = localStorage.getItem(VISITOR_STORAGE_KEY);
-      if (data) visitorRecords = JSON.parse(data);
-      const lastViewed = parseInt(localStorage.getItem(VISITOR_LAST_VIEWED_KEY) || '0');
+      migrateVisitorLegacyKey(VISITOR_STORAGE_KEY);
+      migrateVisitorLegacyKey(VISITOR_LAST_ONLINE_KEY);
+      migrateVisitorLegacyKey(VISITOR_LAST_VIEWED_KEY);
+      const data = visitorGet(VISITOR_STORAGE_KEY);
+      visitorRecords = data ? JSON.parse(data) : [];
+      if (!Array.isArray(visitorRecords)) visitorRecords = [];
+      const lastViewed = parseInt(visitorGet(VISITOR_LAST_VIEWED_KEY) || '0');
       visitorUnreadCount = Math.max(0, visitorRecords.length - lastViewed);
     } catch (e) {
       visitorRecords = [];
@@ -2128,7 +2144,7 @@
 
   function saveVisitorRecords() {
     try {
-      localStorage.setItem(VISITOR_STORAGE_KEY, JSON.stringify(visitorRecords));
+      visitorSet(VISITOR_STORAGE_KEY, JSON.stringify(visitorRecords));
     } catch (e) { console.warn('保存访客记录失败:', e); }
   }
 
@@ -2157,8 +2173,8 @@
 
   function generateOfflineVisitors() {
     const now = Date.now();
-    const lastOnline = parseInt(localStorage.getItem(VISITOR_LAST_ONLINE_KEY)) || now;
-    localStorage.setItem(VISITOR_LAST_ONLINE_KEY, now.toString());
+    const lastOnline = parseInt(visitorGet(VISITOR_LAST_ONLINE_KEY)) || now;
+    visitorSet(VISITOR_LAST_ONLINE_KEY, now.toString());
     if (now - lastOnline < 3600000) return;
 
     const lastDate = new Date(lastOnline); lastDate.setHours(0,0,0,0);
@@ -2182,17 +2198,17 @@
 
   function startOnlineVisitorTimer() {
     if (visitorTimerInterval) clearInterval(visitorTimerInterval);
-    localStorage.setItem(VISITOR_LAST_ONLINE_KEY, Date.now().toString());
+    visitorSet(VISITOR_LAST_ONLINE_KEY, Date.now().toString());
     visitorTimerInterval = setInterval(() => {
       if (getTodayVisitorCount() >= VISITOR_MAX_PER_DAY) return;
       if (Math.random() < 0.20) generateOneVisitorRecord(Date.now());
-      localStorage.setItem(VISITOR_LAST_ONLINE_KEY, Date.now().toString());
+      visitorSet(VISITOR_LAST_ONLINE_KEY, Date.now().toString());
     }, 5 * 60 * 1000);
   }
 
   function stopOnlineVisitorTimer() {
     if (visitorTimerInterval) { clearInterval(visitorTimerInterval); visitorTimerInterval = null; }
-    localStorage.setItem(VISITOR_LAST_ONLINE_KEY, Date.now().toString());
+    visitorSet(VISITOR_LAST_ONLINE_KEY, Date.now().toString());
   }
 
   function updateVisitorBadge() {
@@ -2208,7 +2224,7 @@
 
   function clearVisitorBadge() {
     visitorUnreadCount = 0;
-    localStorage.setItem(VISITOR_LAST_VIEWED_KEY, visitorRecords.length.toString());
+    visitorSet(VISITOR_LAST_VIEWED_KEY, visitorRecords.length.toString());
     const badge = document.getElementById('visitorBadge');
     if (badge) badge.style.display = 'none';
   }
@@ -2351,7 +2367,7 @@
     visitorRecords = [];
     visitorUnreadCount = 0;
     saveVisitorRecords();
-    localStorage.setItem(VISITOR_LAST_VIEWED_KEY, '0');
+    visitorSet(VISITOR_LAST_VIEWED_KEY, '0');
     renderVisitorList();
     updateVisitorBadge();
   }

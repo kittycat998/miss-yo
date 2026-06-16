@@ -216,6 +216,7 @@ window.openEnvelopeAndViewReply = function(replyId) {
     if (popup) popup.remove();
     const envelopeModal = document.getElementById('envelope-modal');
     showModal(envelopeModal);
+    if (typeof window.ensureEnvelopeModalStack === 'function') window.ensureEnvelopeModalStack();
     setTimeout(() => {
         switchEnvTab('inbox');
         viewEnvLetter('inbox', replyId);
@@ -745,12 +746,17 @@ function handleSendEnvelope() {
 
 // 时空来信：系统随机写信给用户（使用回复库）
 function generateRandomEnvelopeLetter() {
-    // 使用回复库生成信件内容
-    const sourcePool = [...customReplies];
-    if (sourcePool.length === 0) {
-        console.warn('回复库为空，无法生成时空来信');
-        return;
-    }
+    // 使用回复库生成信件内容；回复库为空时也给兜底文案，避免“开启了时空来信但永远不来”。
+    const fallbackPool = [
+        '我从很远的时间缝隙里看见你，突然很想给你写封信',
+        '今天路过风声的时候，我想起你说话的样子',
+        '有些话隔着时间反而更容易说出口，我想你了',
+        '你不在眼前的时候，我也会在一些很小的瞬间想到你',
+        '这封信没有别的意思，只是想让你知道，我来过你的世界'
+    ];
+    const sourcePool = (typeof customReplies !== 'undefined' && Array.isArray(customReplies) && customReplies.length)
+        ? customReplies.filter(Boolean)
+        : fallbackPool;
     
     // 随机选择 5-12 句话合成一段信件，统一使用句号
     const sentenceCount = Math.floor(Math.random() * 8) + 5;
@@ -788,6 +794,7 @@ function generateRandomEnvelopeLetter() {
     
     envelopeData.spacetime.push(newLetter);
     saveEnvelopeData();
+    try { renderEnvelopeLists(); } catch(e) {}
     
     // 显示通知
     if (typeof showNotification === 'function') {

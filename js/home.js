@@ -1635,8 +1635,12 @@
                 if (modal) homeShowModal(modal);
             },
             'mood': () => {
-                const modal = document.getElementById('mood-modal');
-                if (modal) homeShowModal(modal);
+                if (typeof window.openMoodModal === 'function') {
+                    window.openMoodModal({ fromHome: true });
+                } else {
+                    const modal = document.getElementById('mood-modal');
+                    if (modal) homeShowModal(modal);
+                }
             },
             'calendar': () => {
                 // 绑定到聊天界面顶部的日历功能

@@ -1132,6 +1132,95 @@ function formatDateStr(date) {
 
 
 let currentMoodSelection = null; 
+
+function ensureMoodOverlayStack() {
+    const overlay = document.getElementById('mood-selector-overlay');
+    if (!overlay) return null;
+    try {
+        if (document.body && overlay.parentElement !== document.body) {
+            document.body.appendChild(overlay);
+        } else if (document.body && document.body.lastElementChild !== overlay) {
+            document.body.appendChild(overlay);
+        }
+        const baseZ = Math.max(Number(window.__modalTopZ) || 60000, 60000);
+        overlay.style.setProperty('position', 'fixed', 'important');
+        overlay.style.setProperty('inset', '0', 'important');
+        overlay.style.setProperty('z-index', String(baseZ + 80), 'important');
+        const editor = document.getElementById('mood-editor-view');
+        const detail = document.getElementById('mood-detail-view');
+        const custom = document.getElementById('custom-mood-dialog');
+        if (editor) editor.style.setProperty('z-index', String(baseZ + 81), 'important');
+        if (detail) detail.style.setProperty('z-index', String(baseZ + 81), 'important');
+        if (custom) custom.style.setProperty('z-index', String(baseZ + 82), 'important');
+    } catch (e) {
+        console.warn('[Mood] overlay stack fix failed:', e);
+    }
+    return overlay;
+}
+window.ensureMoodOverlayStack = ensureMoodOverlayStack;
+
+window.openMoodModal = function(options) {
+    options = options || {};
+    const modal = document.getElementById('mood-modal');
+    if (!modal) return;
+    try { if (typeof window.updateDynamicNames === 'function') window.updateDynamicNames(); } catch(e) {}
+    try {
+        const btnCalendar = document.getElementById('btn-view-calendar');
+        const btnStats = document.getElementById('btn-view-stats');
+        const btnTrash = document.getElementById('btn-view-trash');
+        const viewCalendar = document.getElementById('mood-calendar-view');
+        const viewStats = document.getElementById('mood-stats-view');
+        const viewTrash = document.getElementById('mood-trash-view');
+        btnCalendar && btnCalendar.classList.add('active');
+        btnStats && btnStats.classList.remove('active');
+        btnTrash && btnTrash.classList.remove('active');
+        viewCalendar && viewCalendar.classList.remove('hidden-view');
+        viewStats && viewStats.classList.add('hidden-view');
+        viewTrash && viewTrash.classList.add('hidden-view');
+        if (typeof renderMoodCalendar === 'function') renderMoodCalendar();
+    } catch(e) { console.warn('[Mood] render before open failed:', e); }
+
+    const doShow = () => {
+        if (document.body && modal.parentElement !== document.body) document.body.appendChild(modal);
+        const homeContainer = document.getElementById('home-container');
+        const fromHome = options.fromHome || (homeContainer && homeContainer.classList.contains('active'));
+        if (fromHome && typeof window.homeShowModal === 'function') window.homeShowModal(modal);
+        else if (typeof showModal === 'function') showModal(modal);
+        else modal.style.display = 'flex';
+    };
+
+    if (options.fromAdvanced) {
+        const advModal = document.getElementById('advanced-modal');
+        if (advModal && typeof hideModal === 'function') hideModal(advModal);
+        setTimeout(doShow, 160);
+    } else {
+        doShow();
+    }
+};
+
+window.closeMoodModal = function() {
+    const modal = document.getElementById('mood-modal');
+    if (!modal) return;
+    if (typeof hideModal === 'function') hideModal(modal);
+    else modal.style.display = 'none';
+    // 从主页进入时，关闭后明确把主页壳露出来，避免 PWA 下 display/visibility 被弹窗恢复逻辑搅乱。
+    setTimeout(() => {
+        const homeContainer = document.getElementById('home-container');
+        const pageBg = document.getElementById('home-page-bg');
+        const chatArea = document.querySelector('.main-chat-area');
+        const header = document.querySelector('.header');
+        const inputArea = document.querySelector('.input-area-wrapper');
+        if (homeContainer && homeContainer.classList.contains('active')) {
+            homeContainer.style.display = 'flex';
+            if (pageBg) pageBg.style.display = 'block';
+            if (chatArea) chatArea.style.display = 'none';
+            if (header) header.style.display = 'none';
+            if (inputArea) inputArea.style.display = 'none';
+            document.body.classList.add('home-active');
+        }
+    }, 340);
+};
+
 function renderMoodCalendar() {
     const grid = document.getElementById('calendar-grid');
     const monthLabel = document.getElementById('calendar-month-label');
@@ -1737,7 +1826,7 @@ function openMoodSelector(dateStr, editTarget) {
     currentMoodPage = 1;
     currentMoodSelection = null;
 
-    const overlay = document.getElementById('mood-selector-overlay');
+    const overlay = ensureMoodOverlayStack() || document.getElementById('mood-selector-overlay');
     const editorView = document.getElementById('mood-editor-view');
     const detailView = document.getElementById('mood-detail-view');
     const dateTitle = document.getElementById('mood-selector-date');
@@ -1829,7 +1918,7 @@ document.getElementById('confirm-mood-save').addEventListener('click', () => {
 function showDayDetails(dateStr, data) {
     selectedDateStr = dateStr;
     window.selectedDateStr = dateStr;
-    const overlay = document.getElementById('mood-selector-overlay');
+    const overlay = ensureMoodOverlayStack() || document.getElementById('mood-selector-overlay');
     const editorView = document.getElementById('mood-editor-view');
     const detailView = document.getElementById('mood-detail-view');
     
@@ -2044,20 +2133,22 @@ function initMoodListeners() {
         entryBtn.parentNode.replaceChild(newBtn, entryBtn);
         
         newBtn.addEventListener('click', () => {
-            if (typeof window.updateDynamicNames === 'function') window.updateDynamicNames();
-            const advModal = document.getElementById('advanced-modal');
-            if (advModal) hideModal(advModal); 
-            setTimeout(() => {
-                renderMoodCalendar();
-                showModal(modal);
-            }, 150); 
+            if (typeof window.openMoodModal === 'function') window.openMoodModal({ fromAdvanced: true });
+            else {
+                const advModal = document.getElementById('advanced-modal');
+                if (advModal) hideModal(advModal);
+                setTimeout(() => { renderMoodCalendar(); showModal(modal); }, 150);
+            }
         });
     }
 
     const closeMoodBtn = document.getElementById('close-mood');
     if (closeMoodBtn && !closeMoodBtn.dataset.initialized) {
         closeMoodBtn.dataset.initialized = 'true';
-        closeMoodBtn.addEventListener('click', () => hideModal(modal));
+        closeMoodBtn.addEventListener('click', () => {
+            if (typeof window.closeMoodModal === 'function') window.closeMoodModal();
+            else hideModal(modal);
+        });
     }
 
     const exportMoodBtn = document.getElementById('mood-export-btn');
