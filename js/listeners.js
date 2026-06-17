@@ -720,6 +720,8 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
                 resetCssBtn.addEventListener('click', () => {
                     cssTextarea.value = "";
                     settings.customBubbleCss = "";
+                    window.__allowEmptySettingsFields = window.__allowEmptySettingsFields || {};
+                    window.__allowEmptySettingsFields.customBubbleCss = true;
                     applyCustomBubbleCss("");
                     if (document.getElementById('css-live-preview-style')) document.getElementById('css-live-preview-style').textContent = '';
                     throttledSaveData();

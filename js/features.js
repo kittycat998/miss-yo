@@ -337,7 +337,7 @@
         html += res.slice(0,200).map(function(m){
             var isMe = m.sender==='user';
             var preview = m.text?(m.text.length>100?m.text.slice(0,100)+'…':m.text):(m.image?'[图片]':'');
-            return '<div class="search-result-item" onclick="window._scrollToMsg&&window._scrollToMsg('+m.id+')">'+
+            return '<div class="search-result-item" data-search-msg-id="'+esc(m.id)+'" onclick="window._scrollToMsg&&window._scrollToMsg(\''+String(m.id).replace(/\\/g,'\\\\').replace(/'/g,'\\\'')+'\')">'+
                 '<div class="sri-avatar '+(isMe?'sri-me':'sri-partner')+'">'+_avHtml(isMe)+'</div>'+
                 '<div class="sri-body">'+
                   '<div class="sri-meta"><span class="sri-name">'+esc(nm(m))+'</span><span class="sri-time">'+fmt(m.timestamp)+'</span></div>'+
@@ -350,9 +350,33 @@
     };
 
     window._scrollToMsg = function(id) {
-        // 关闭统计弹窗（hideModal 可能不在全局作用域，直接操作 DOM）
-        var m = document.getElementById('stats-modal');
-        if (m) {
+        id = String(id || '');
+        function escSel(v) {
+            try { return (window.CSS && CSS.escape) ? CSS.escape(String(v)) : String(v).replace(/"/g, '\\"'); }
+            catch(e) { return String(v).replace(/"/g, '\\"'); }
+        }
+        function findTarget() {
+            var sid = escSel(id);
+            return document.querySelector('[data-msg-id="'+sid+'"]') ||
+                   document.querySelector('[data-id="'+sid+'"]') ||
+                   document.querySelector('[data-message-id="'+sid+'"]');
+        }
+        function highlight(target) {
+            if (!target) return;
+            target.scrollIntoView({behavior:'smooth', block:'center'});
+            target.classList.add('msg-highlight');
+            target.style.transition = 'background .3s ease, box-shadow .3s ease';
+            target.style.background = 'rgba(var(--accent-color-rgb),.14)';
+            target.style.boxShadow = '0 0 0 2px rgba(var(--accent-color-rgb),.22)';
+            setTimeout(function(){
+                target.classList.remove('msg-highlight');
+                target.style.background = '';
+                target.style.boxShadow = '';
+            }, 1800);
+        }
+        function closeStatsModalThen(cb) {
+            var m = document.getElementById('stats-modal');
+            if (!m) { cb(); return; }
             var content = m.querySelector('.modal-content');
             if (content) {
                 content.style.opacity = '0';
@@ -361,54 +385,46 @@
             if (m._hideTimeout) clearTimeout(m._hideTimeout);
             m._hideTimeout = setTimeout(function() {
                 m.style.display = 'none';
-            }, 300);
+                if (content) {
+                    content.style.opacity = '';
+                    content.style.transform = '';
+                }
+                cb();
+            }, 220);
         }
-
-        // 延迟等弹窗关闭动画完成，再尝试滚动
-        setTimeout(function() {
-            var el = document.querySelector('[data-id="'+id+'"]') || document.querySelector('[data-message-id="'+id+'"]');
-            if (el) {
-                el.scrollIntoView({behavior:'smooth',block:'center'});
-                el.style.transition='background .3s ease';
-                el.style.background='rgba(var(--accent-color-rgb),.14)';
-                setTimeout(function(){ el.style.background=''; }, 1800);
-            } else {
-                // 消息不在当前视图中，需要加载更多历史消息
-                var msgIndex = -1;
-                if (typeof messages !== 'undefined') {
-                    for (var i = 0; i < messages.length; i++) {
-                        if (String(messages[i].id) === String(id)) {
-                            msgIndex = i;
-                            break;
-                        }
-                    }
-                }
-                if (msgIndex === -1) {
-                    if (typeof showNotification==='function') showNotification('消息可能已被删除','info',2000);
-                    return;
-                }
-                // 增加显示的消息数量以包含目标消息
-                if (typeof displayedMessageCount !== 'undefined') {
-                    var needed = messages.length - msgIndex;
-                    if (needed > displayedMessageCount) {
-                        displayedMessageCount = needed + 10; // 多加载一些
-                        if (typeof renderMessages === 'function') renderMessages(false);
-                        // 渲染完成后再尝试滚动
-                        setTimeout(function() {
-                            var el2 = document.querySelector('[data-id="'+id+'"]') || document.querySelector('[data-message-id="'+id+'"]');
-                            if (el2) {
-                                el2.scrollIntoView({behavior:'smooth',block:'center'});
-                                el2.style.transition='background .3s ease';
-                                el2.style.background='rgba(var(--accent-color-rgb),.14)';
-                                setTimeout(function(){ el2.style.background=''; }, 1800);
-                            } else {
-                                if (typeof showNotification==='function') showNotification('消息定位失败','info',2000);
-                            }
-                        }, 200);
-                    }
-                }
+        function tryScroll() {
+            var target = findTarget();
+            if (!target) return false;
+            highlight(target);
+            return true;
+        }
+        closeStatsModalThen(function() {
+            if (tryScroll()) return;
+            if (typeof messages === 'undefined' || !messages) return;
+            var msgIndex = messages.findIndex(function(m){ return String(m.id) === String(id); });
+            if (msgIndex === -1) {
+                if (typeof showNotification === 'function') showNotification('消息可能已被删除', 'info', 1800);
+                return;
             }
-        }, 350);
+            var needed = messages.length - msgIndex;
+            if (typeof displayedMessageCount !== 'undefined' && needed > displayedMessageCount) {
+                displayedMessageCount = needed + 10;
+            }
+            if (typeof renderMessages === 'function') {
+                renderMessages(false);
+                setTimeout(function(){
+                    if (!tryScroll() && typeof scrollToQuotedMessage === 'function') {
+                        var el = document.createElement('div');
+                        el.dataset.replyId = id;
+                        scrollToQuotedMessage(el);
+                    } else if (!findTarget() && typeof showNotification === 'function') {
+                        showNotification('消息定位失败', 'info', 1800);
+                    }
+                }, 180);
+            } else if (typeof showNotification === 'function') {
+                showNotification('消息不在当前视图中', 'info', 1800);
+            }
+        });
     };
 })();
 

@@ -208,6 +208,108 @@ function toggleBatchFavoriteMode() {
             ctx.closePath();
         }
 
+
+        function _shotPx(value, fallback) {
+            var n = parseFloat(String(value || '').split(' ')[0]);
+            return isFinite(n) ? n : fallback;
+        }
+
+        function _shotReadLiveBubbleVisual(isUser) {
+            // 截图不要再另造“默认气泡”。这里直接放一个隐藏的真实消息 DOM，读取当前 CSS/自定义 CSS 后的最终样式。
+            var fallbackBg = isUser ? _shotGetCssVar('--message-sent-bg', _shotGetCssVar('--accent-color', '#8b7cf6')) : _shotGetCssVar('--message-received-bg', '#fff');
+            var fallbackColor = isUser ? _shotGetCssVar('--message-sent-text', '#fff') : _shotGetCssVar('--message-received-text', _shotGetCssVar('--text-primary', '#222'));
+            var styleName = (window.settings && settings.bubbleStyle) || 'standard';
+            var result = {
+                backgroundColor: fallbackBg,
+                color: fallbackColor,
+                borderColor: 'rgba(0,0,0,0)',
+                borderWidth: 0,
+                radii: isUser ? { tl: 16, tr: 16, br: 6, bl: 16 } : { tl: 16, tr: 16, br: 16, bl: 6 },
+                shadowColor: 'transparent',
+                shadowBlur: 0,
+                shadowOffsetX: 0,
+                shadowOffsetY: 0
+            };
+            var probe = null;
+            try {
+                probe = document.createElement('div');
+                probe.className = 'message message-' + (isUser ? 'sent' : 'received') + ' ' + styleName;
+                probe.textContent = '截图样式采样';
+                probe.setAttribute('style', 'position:absolute!important;left:-99999px!important;top:-99999px!important;visibility:hidden!important;pointer-events:none!important;display:block!important;max-width:240px!important;');
+                document.body.appendChild(probe);
+                var cs = getComputedStyle(probe);
+                result.backgroundColor = (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)') ? cs.backgroundColor : fallbackBg;
+                result.color = cs.color || fallbackColor;
+                result.borderColor = cs.borderColor || 'rgba(0,0,0,0)';
+                result.borderWidth = _shotPx(cs.borderTopWidth, 0);
+                result.radii = {
+                    tl: _shotPx(cs.borderTopLeftRadius, result.radii.tl),
+                    tr: _shotPx(cs.borderTopRightRadius, result.radii.tr),
+                    br: _shotPx(cs.borderBottomRightRadius, result.radii.br),
+                    bl: _shotPx(cs.borderBottomLeftRadius, result.radii.bl)
+                };
+                var shadow = cs.boxShadow || '';
+                if (shadow && shadow !== 'none') {
+                    // 只采第一层阴影，保持截图轻量；颜色/圆角/边框仍以真实 DOM 为准。
+                    var colorMatch = shadow.match(/rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}/);
+                    var nums = shadow.replace(/rgba?\([^)]*\)/g, '').match(/-?\d+(?:\.\d+)?px/g) || [];
+                    if (colorMatch && nums.length >= 3) {
+                        result.shadowColor = colorMatch[0];
+                        result.shadowOffsetX = parseFloat(nums[0]) || 0;
+                        result.shadowOffsetY = parseFloat(nums[1]) || 0;
+                        result.shadowBlur = parseFloat(nums[2]) || 0;
+                    }
+                }
+            } catch(e) {
+                console.warn('截图气泡样式采样失败，使用 CSS 变量兜底:', e);
+            } finally {
+                if (probe && probe.parentNode) probe.parentNode.removeChild(probe);
+            }
+            return result;
+        }
+
+        function _shotBubblePathFromRadii(ctx, x, y, w, h, radii) {
+            radii = radii || {};
+            var tl = Math.min(_shotPx(radii.tl, 16), w / 2, h / 2);
+            var tr = Math.min(_shotPx(radii.tr, 16), w / 2, h / 2);
+            var br = Math.min(_shotPx(radii.br, 16), w / 2, h / 2);
+            var bl = Math.min(_shotPx(radii.bl, 16), w / 2, h / 2);
+            ctx.beginPath();
+            ctx.moveTo(x + tl, y);
+            ctx.lineTo(x + w - tr, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + tr);
+            ctx.lineTo(x + w, y + h - br);
+            ctx.quadraticCurveTo(x + w, y + h, x + w - br, y + h);
+            ctx.lineTo(x + bl, y + h);
+            ctx.quadraticCurveTo(x, y + h, x, y + h - bl);
+            ctx.lineTo(x, y + tl);
+            ctx.quadraticCurveTo(x, y, x + tl, y);
+            ctx.closePath();
+        }
+
+        function _shotPaintLiveBubble(ctx, x, y, w, h, visual) {
+            visual = visual || {};
+            ctx.save();
+            if (visual.shadowBlur) {
+                ctx.shadowColor = visual.shadowColor || 'rgba(0,0,0,.12)';
+                ctx.shadowBlur = visual.shadowBlur || 0;
+                ctx.shadowOffsetX = visual.shadowOffsetX || 0;
+                ctx.shadowOffsetY = visual.shadowOffsetY || 0;
+            }
+            _shotBubblePathFromRadii(ctx, x, y, w, h, visual.radii);
+            ctx.fillStyle = visual.backgroundColor || '#fff';
+            ctx.fill();
+            ctx.restore();
+            if (visual.borderWidth && visual.borderWidth > 0 && visual.borderColor && visual.borderColor !== 'rgba(0, 0, 0, 0)') {
+                ctx.save();
+                _shotBubblePathFromRadii(ctx, x, y, w, h, visual.radii);
+                ctx.strokeStyle = visual.borderColor;
+                ctx.lineWidth = Math.min(3, visual.borderWidth);
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
         function _shotWrapText(ctx, text, maxWidth) {
             text = String(text || '');
             var lines = [];
@@ -245,34 +347,124 @@ function toggleBatchFavoriteMode() {
         }
 
 
+        function _shotRelativeTime(ts) {
+            if (!ts) return '';
+            var d = new Date(ts);
+            var now = new Date();
+            var diff = now - d;
+            if (diff < 60000) return '刚刚';
+            if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前';
+            if (diff < 86400000) return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+            return (d.getMonth() + 1) + '/' + d.getDate();
+        }
+
         function _shotRedPacketInfo(msg) {
             var rp = (msg && msg.redPacket) || {};
+            var recordId = rp.id || (msg && msg.id);
             var cents = Number(rp.amount || 0);
-            var money = '¥' + (cents / 100).toFixed(2);
-            var note = rp.message || msg.text || '恭喜发财，大吉大利';
+            var note = rp.message || (msg && msg.text) || '恭喜发财';
             var status = rp.status || 'pending';
-            var statusText = status === 'received' ? '已领取' : (status === 'expired' ? '已退回' : '待领取');
-            return { money: money, note: String(note || ''), statusText: statusText };
+            // 对齐现有聊天渲染：截图前也读 transferData.records 里的最新领取/退回状态。
+            try {
+                if (typeof transferData !== 'undefined' && transferData && Array.isArray(transferData.records)) {
+                    var latest = transferData.records.find(function(r){ return String(r.id) === String(recordId); });
+                    if (latest) {
+                        cents = Number(latest.amount || cents || 0);
+                        status = latest.status || status;
+                        note = latest.message || note;
+                    }
+                }
+            } catch(e) {}
+            return {
+                amountText: (cents / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+                money: '¥' + (cents / 100).toFixed(2),
+                note: String(note || ''),
+                status: String(status || 'pending'),
+                timeText: _shotRelativeTime(msg && msg.timestamp)
+            };
         }
 
         function _shotDrawRedPacket(ctx, x, y, w, h, isUser, info) {
-            var topH = Math.round(h * 0.68);
-            _shotRoundRect(ctx, x, y, w, h, 12);
-            ctx.save(); ctx.clip();
-            var grad = ctx.createLinearGradient(x, y, x + w, y + topH);
-            grad.addColorStop(0, '#f5a24a'); grad.addColorStop(1, '#e86f3d');
-            ctx.fillStyle = grad; ctx.fillRect(x, y, w, topH);
-            ctx.fillStyle = '#fff6df'; ctx.fillRect(x, y + topH, w, h - topH);
-            ctx.restore();
+            // 这里不再使用旧橙色“微信红包”手画卡，样式对齐 js/features/red-packet.js 的 renderRedPacketMessage。
+            info = info || {};
+            var isOpened = info.status && info.status !== 'pending';
+            var bodyH = Math.max(74, h - 32);
+            var footerH = h - bodyH;
             ctx.save();
-            ctx.fillStyle = '#ffe1a8'; ctx.beginPath(); ctx.arc(x + 34, y + 33, 17, 0, Math.PI * 2); ctx.fill();
-            ctx.fillStyle = '#d84835'; ctx.font = 'bold 16px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('¥', x + 34, y + 34);
-            ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillStyle = '#fff'; ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
-            var noteLines = _shotWrapText(ctx, info.note || '恭喜发财，大吉大利', w - 72).slice(0, 2);
-            noteLines.forEach(function(line, idx) { ctx.fillText(line, x + 62, y + 30 + idx * 19); });
-            ctx.font = '12px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.86)'; ctx.fillText(info.statusText || '红包', x + 62, y + topH - 12);
-            ctx.fillStyle = '#b56b2a'; ctx.font = '13px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif'; ctx.fillText('微信红包', x + 12, y + h - 12);
-            ctx.textAlign = 'right'; ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif'; ctx.fillText(info.money, x + w - 12, y + h - 12);
+            _shotRoundRect(ctx, x, y, w, h, 6);
+            ctx.clip();
+            var grad = ctx.createLinearGradient(x, y, x, y + bodyH);
+            if (isOpened) {
+                grad.addColorStop(0, '#e0d8d8');
+                grad.addColorStop(1, '#cccccc');
+            } else {
+                grad.addColorStop(0, '#c4453c');
+                grad.addColorStop(1, '#a33a32');
+            }
+            ctx.fillStyle = grad;
+            ctx.fillRect(x, y, w, bodyH);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(x, y + bodyH, w, footerH);
+            ctx.strokeStyle = 'rgba(196,69,60,0.3)';
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(x, y + bodyH + 0.5);
+            ctx.lineTo(x + w, y + bodyH + 0.5);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 红包袋图标：对齐当前 DOM 里的 SVG 线框风格。
+            var iconX = x + 16, iconY = y + 18;
+            ctx.strokeStyle = isOpened ? '#999999' : '#ffffff';
+            ctx.fillStyle = isOpened ? '#999999' : '#ffffff';
+            ctx.lineWidth = 1.8;
+            _shotRoundRect(ctx, iconX + 1, iconY + 3, 34, 36, 4);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(iconX + 1, iconY + 8);
+            ctx.lineTo(iconX + 18, iconY + 20);
+            ctx.lineTo(iconX + 35, iconY + 8);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(iconX + 18, iconY + 20, 4.6, 0, Math.PI * 2);
+            ctx.fill();
+
+            var textX = x + 72;
+            var maxTextW = w - 88;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'alphabetic';
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '600 13px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
+            ctx.fillText('红包', textX, y + 25);
+            ctx.font = '700 24px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
+            ctx.fillText('¥' + (info.amountText || '0.00'), textX, y + 54);
+            ctx.font = '11px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
+            ctx.globalAlpha = .82;
+            ctx.fillText(_shotEllipsis(ctx, info.note || '恭喜发财', maxTextW), textX, y + 72);
+            ctx.globalAlpha = 1;
+
+            var statusText = '待领取';
+            var statusColor = '#c4453c';
+            var statusIcon = '◷';
+            if (info.status === 'pending') {
+                statusText = isUser ? '对方待领取' : '待领取';
+                statusColor = '#c4453c';
+                statusIcon = '◷';
+            } else if (info.status === 'received') {
+                statusText = '已领取';
+                statusColor = '#2ed573';
+                statusIcon = '✓';
+            } else {
+                statusText = '已退回';
+                statusColor = '#bbbbbb';
+                statusIcon = '↶';
+            }
+            ctx.font = '500 11px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
+            ctx.fillStyle = statusColor;
+            ctx.fillText(statusIcon + ' ' + statusText, x + 14, y + bodyH + 21);
+            ctx.textAlign = 'right';
+            ctx.fillStyle = '#bbbbbb';
+            ctx.fillText(info.timeText || '', x + w - 14, y + bodyH + 21);
             ctx.restore();
         }
 
@@ -475,7 +667,7 @@ function toggleBatchFavoriteMode() {
 
                 if (msg.type === 'red-packet' && msg.redPacket) {
                     var rpInfo = _shotRedPacketInfo(msg);
-                    var rpW = 220, rpH = 112;
+                    var rpW = 260, rpH = 112;
                     var rpBubbleH = replyExtraH + rpH;
                     items.push({ type: 'message', msg: msg, img: null, lines: [], bubbleW: rpW, bubbleH: rpBubbleH, imageW: 0, imageH: 0, redPacket: true, redPacketInfo: rpInfo, reply: reply, cardH: rpH, h: Math.max(44, rpBubbleH + 26) + 10 });
                     prevMsg = msg;
@@ -578,10 +770,12 @@ function toggleBatchFavoriteMode() {
             var textColor = _shotGetCssVar('--text-primary', '#222');
             var subColor = _shotGetCssVar('--text-secondary', '#777');
             var border = _shotGetCssVar('--border-color', '#e6e6e6');
-            var sentBg = _shotGetCssVar('--message-sent-bg', _shotGetCssVar('--accent-color', '#8b7cf6'));
-            var sentText = _shotGetCssVar('--message-sent-text', '#fff');
-            var receivedBg = _shotGetCssVar('--message-received-bg', '#fff');
-            var receivedText = _shotGetCssVar('--message-received-text', textColor);
+            var sentVisual = _shotReadLiveBubbleVisual(true);
+            var receivedVisual = _shotReadLiveBubbleVisual(false);
+            var sentBg = sentVisual.backgroundColor || _shotGetCssVar('--message-sent-bg', _shotGetCssVar('--accent-color', '#8b7cf6'));
+            var sentText = sentVisual.color || _shotGetCssVar('--message-sent-text', '#fff');
+            var receivedBg = receivedVisual.backgroundColor || _shotGetCssVar('--message-received-bg', '#fff');
+            var receivedText = receivedVisual.color || _shotGetCssVar('--message-received-text', textColor);
 
             ctx.fillStyle = bg;
             ctx.fillRect(0, 0, width, height);
@@ -676,9 +870,8 @@ function toggleBatchFavoriteMode() {
                         ctx.fillText('图片加载失败', bubbleX + it.imageW/2, bubbleY + it.imageH/2 + 4);
                     }
                 } else {
-                    _shotDrawBubblePath(ctx, bubbleX, bubbleY, it.bubbleW, it.bubbleH, isUser);
-                    ctx.fillStyle = isUser ? sentBg : receivedBg;
-                    ctx.fill();
+                    var bubbleVisual = isUser ? sentVisual : receivedVisual;
+                    _shotPaintLiveBubble(ctx, bubbleX, bubbleY, it.bubbleW, it.bubbleH, bubbleVisual);
                     var tx = bubbleX + 14, ty = bubbleY + 24;
                     if (it.reply) {
                         _shotDrawReplyBlock(ctx, bubbleX + 10, bubbleY + 10, it.bubbleW - 20, it.reply, isUser, colors);

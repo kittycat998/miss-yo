@@ -677,7 +677,8 @@ function _tryRecoverFromBackup() {
 
 async function _safeSetPreserveNonEmpty(baseKey, value) {
     const fullKey = getStorageKey(baseKey);
-    if (Array.isArray(value) && value.length === 0) {
+    const allowEmpty = !!(window.__allowEmptyStorageKeys && window.__allowEmptyStorageKeys[baseKey]);
+    if (Array.isArray(value) && value.length === 0 && !allowEmpty) {
         try {
             const oldValue = await localforage.getItem(fullKey);
             if (Array.isArray(oldValue) && oldValue.length > 0) {
@@ -686,7 +687,14 @@ async function _safeSetPreserveNonEmpty(baseKey, value) {
             }
         } catch(e) {}
     }
-    return localforage.setItem(fullKey, value);
+    try {
+        const ret = await localforage.setItem(fullKey, value);
+        if (allowEmpty && window.__allowEmptyStorageKeys) delete window.__allowEmptyStorageKeys[baseKey];
+        return ret;
+    } catch (e) {
+        if (allowEmpty && window.__allowEmptyStorageKeys) delete window.__allowEmptyStorageKeys[baseKey];
+        throw e;
+    }
 }
 
 async function _safeSetChatSettingsPreserveVisuals(value) {
@@ -697,7 +705,8 @@ async function _safeSetChatSettingsPreserveVisuals(value) {
         if (old && typeof old === 'object') {
             const preserveWhenEmpty = ['customBubbleCss', 'customGlobalCss', 'customFontUrl'];
             preserveWhenEmpty.forEach(function(k) {
-                if ((next[k] === '' || next[k] === null || next[k] === undefined) && old[k]) next[k] = old[k];
+                const allowClear = !!(window.__allowEmptySettingsFields && window.__allowEmptySettingsFields[k]);
+                if (!allowClear && (next[k] === '' || next[k] === null || next[k] === undefined) && old[k]) next[k] = old[k];
             });
             if ((!next.bubbleStyle || next.bubbleStyle === 'standard') && old.bubbleStyle && old.bubbleStyle !== 'standard' && !window.__bubbleStyleChangedThisSession) {
                 next.bubbleStyle = old.bubbleStyle;
@@ -1625,7 +1634,9 @@ function createMessageFragment(msg, prevMsg, nextMsg, lastSenderRef) {
 
     if (msg.type === 'system') {
         const systemMsgDiv = document.createElement('div');
-        systemMsgDiv.className = 'system-message';
+        systemMsgDiv.className = 'system-message selectable-special-message';
+        systemMsgDiv.dataset.id = msg.id;
+        systemMsgDiv.dataset.msgId = msg.id;
         systemMsgDiv.innerHTML = msg.text;
         fragment.appendChild(systemMsgDiv);
         lastSenderRef.current = 'system';
@@ -1634,8 +1645,9 @@ function createMessageFragment(msg, prevMsg, nextMsg, lastSenderRef) {
 
     if (msg.type === 'call-event') {
         const callEvDiv = document.createElement('div');
-        callEvDiv.className = 'call-event-message';
+        callEvDiv.className = 'call-event-message selectable-special-message';
         callEvDiv.dataset.id = msg.id;
+        callEvDiv.dataset.msgId = msg.id;
         const icon = msg.callIcon || 'fa-video';
         const isRejected = icon === 'fa-phone-slash';
         const colorClass = isRejected ? 'call-event-pill--rejected' : 'call-event-pill--ended';
@@ -1859,6 +1871,11 @@ function createMessageFragment(msg, prevMsg, nextMsg, lastSenderRef) {
         if (rpCard) {
             const rpId = rpCard.dataset.rpId || (msg.redPacket && msg.redPacket.id) || msg.id;
             rpCard.addEventListener('click', function(e) {
+                // 多选收藏/截图模式下，红包卡片不要打开领取弹窗，交给外层消息选择逻辑处理。
+                // 这样“已退回红包”卡片也能像普通消息一样被选中截图。
+                if (window.isScreenshotSelectMode || window.isBatchFavoriteMode || (typeof isBatchFavoriteMode !== 'undefined' && isBatchFavoriteMode)) {
+                    return;
+                }
                 e.stopPropagation();
                 if (rpCard.dataset.suppressOpen === '1') {
                     delete rpCard.dataset.suppressOpen;

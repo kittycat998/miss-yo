@@ -507,12 +507,13 @@ window._sendPartnerNotification = function(title, body) {
         if (!('Notification' in window)) return;
         if (Notification.permission !== 'granted') return;
         if (!document.hidden) return;
-        new Notification(title || '传讯', {
+        var n = new Notification(title || '传讯', {
             body: body || '对方发来了消息',
             icon: (document.querySelector('#partner-avatar img') || {}).src,
             tag: 'partner-msg',
             renotify: true
         });
+        n.onclick = function() { try { window.focus(); } catch(e) {} try { n.close(); } catch(e) {} };
     } catch(e) {}
 };
 

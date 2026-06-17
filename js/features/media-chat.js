@@ -539,6 +539,9 @@
         if (kind === 'video') msg.videoUrl = url;
 
         if (typeof addMessage === 'function') addMessage(msg);
+        if (sender !== 'user' && kind === 'video' && typeof window._sendPartnerNotification === 'function') {
+            window._sendPartnerNotification((typeof settings !== 'undefined' && settings.partnerName) || '对方', '发来一个视频' + (name ? '：' + name : ''));
+        }
         window.__chatMediaUrlStore = window.__chatMediaUrlStore || {};
         window.__chatMediaUrlStore[String(msg.id)] = url;
         if (libraryId) window.__chatMediaUrlStore['library_' + String(libraryId)] = url;

@@ -665,6 +665,9 @@ html:not([data-theme="dark"])[data-color-theme="black-white"] .message-sent{
         if (!ov) return;
         fillAv('call-inc-avatar'); fillNm('call-inc-name');
         ov.classList.add('visible');
+        if (typeof window._sendPartnerNotification === 'function') {
+            window._sendPartnerNotification(getName(), '邀请你进行视频通话');
+        }
         clearTimeout(S.incomingTimer);
 
         const autoRejectChance = 0.30;

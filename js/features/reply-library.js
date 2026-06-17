@@ -1455,6 +1455,10 @@ function _renderVoiceCard(container, item, idx) {
                 ctx.groups.forEach(g => { if (g.items) g.items = g.items.filter(url => url !== item.audioUrl); });
             }
             customVoices.splice(idx, 1);
+            if (customVoices.length === 0) {
+                window.__allowEmptyStorageKeys = window.__allowEmptyStorageKeys || {};
+                window.__allowEmptyStorageKeys.customVoices = true;
+            }
             throttledSaveData();
             renderReplyLibrary();
         }
