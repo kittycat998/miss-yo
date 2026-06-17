@@ -350,82 +350,15 @@
     };
 
     window._scrollToMsg = function(id) {
+        if (typeof window.locateMessageInChat === 'function') {
+            window.locateMessageInChat(id, { closeDelay: 140, chatDelay: 70, heavyThreshold: 420 });
+            return;
+        }
         id = String(id || '');
-        function escSel(v) {
-            try { return (window.CSS && CSS.escape) ? CSS.escape(String(v)) : String(v).replace(/"/g, '\\"'); }
-            catch(e) { return String(v).replace(/"/g, '\\"'); }
-        }
-        function findTarget() {
-            var sid = escSel(id);
-            return document.querySelector('[data-msg-id="'+sid+'"]') ||
-                   document.querySelector('[data-id="'+sid+'"]') ||
-                   document.querySelector('[data-message-id="'+sid+'"]');
-        }
-        function highlight(target) {
-            if (!target) return;
-            target.scrollIntoView({behavior:'smooth', block:'center'});
-            target.classList.add('msg-highlight');
-            target.style.transition = 'background .3s ease, box-shadow .3s ease';
-            target.style.background = 'rgba(var(--accent-color-rgb),.14)';
-            target.style.boxShadow = '0 0 0 2px rgba(var(--accent-color-rgb),.22)';
-            setTimeout(function(){
-                target.classList.remove('msg-highlight');
-                target.style.background = '';
-                target.style.boxShadow = '';
-            }, 1800);
-        }
-        function closeStatsModalThen(cb) {
-            var m = document.getElementById('stats-modal');
-            if (!m) { cb(); return; }
-            var content = m.querySelector('.modal-content');
-            if (content) {
-                content.style.opacity = '0';
-                content.style.transform = 'translateY(20px) scale(0.95)';
-            }
-            if (m._hideTimeout) clearTimeout(m._hideTimeout);
-            m._hideTimeout = setTimeout(function() {
-                m.style.display = 'none';
-                if (content) {
-                    content.style.opacity = '';
-                    content.style.transform = '';
-                }
-                cb();
-            }, 220);
-        }
-        function tryScroll() {
-            var target = findTarget();
-            if (!target) return false;
-            highlight(target);
-            return true;
-        }
-        closeStatsModalThen(function() {
-            if (tryScroll()) return;
-            if (typeof messages === 'undefined' || !messages) return;
-            var msgIndex = messages.findIndex(function(m){ return String(m.id) === String(id); });
-            if (msgIndex === -1) {
-                if (typeof showNotification === 'function') showNotification('消息可能已被删除', 'info', 1800);
-                return;
-            }
-            var needed = messages.length - msgIndex;
-            if (typeof displayedMessageCount !== 'undefined' && needed > displayedMessageCount) {
-                displayedMessageCount = needed + 10;
-            }
-            if (typeof renderMessages === 'function') {
-                renderMessages(false);
-                setTimeout(function(){
-                    if (!tryScroll() && typeof scrollToQuotedMessage === 'function') {
-                        var el = document.createElement('div');
-                        el.dataset.replyId = id;
-                        scrollToQuotedMessage(el);
-                    } else if (!findTarget() && typeof showNotification === 'function') {
-                        showNotification('消息定位失败', 'info', 1800);
-                    }
-                }, 180);
-            } else if (typeof showNotification === 'function') {
-                showNotification('消息不在当前视图中', 'info', 1800);
-            }
-        });
+        var target = document.querySelector('[data-msg-id="' + id.replace(/"/g, '\"') + '"]') || document.querySelector('[data-id="' + id.replace(/"/g, '\"') + '"]');
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
     };
+
 })();
 
 function renderComboMenu() {

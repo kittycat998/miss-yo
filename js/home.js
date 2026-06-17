@@ -1655,8 +1655,7 @@
                 if (modal) homeShowModal(modal);
             },
             'stats': () => {
-                const modal = document.getElementById('stats-modal');
-                if (modal) homeShowModal(modal);
+                if (typeof window.openChatStatsModal === 'function') window.openChatStatsModal('home-app');
             },
             'accounting': () => {
                 if (typeof window.openAccountingModal === 'function') {
@@ -1788,8 +1787,7 @@
                 if (modal) homeShowModal(modal);
             },
             'stats': () => {
-                const modal = document.getElementById('stats-modal');
-                if (modal) homeShowModal(modal);
+                if (typeof window.openChatStatsModal === 'function') window.openChatStatsModal('home-nav');
             },
             'moments': () => {
                 // 朋友圈 - 打开覆盖式页面

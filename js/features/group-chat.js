@@ -585,7 +585,7 @@ window._runMsgSearch = function() {
         if (msg.text) contentHtml += '<div style="font-size:13px;color:var(--text-primary);line-height:1.5;word-break:break-word;margin-top:3px;">' + highlight(msg.text) + '</div>';
         if (msg.image) contentHtml += '<img src="' + msg.image + '" style="max-width:120px;max-height:90px;border-radius:8px;display:block;margin-top:5px;cursor:pointer;" onclick="if(typeof viewImage===\'function\')viewImage(\'' + msg.image.replace(/'/g,"\\'") + '\')" loading="lazy">';
 
-        return '<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:12px;background:var(--primary-bg);border:1px solid var(--border-color);margin-bottom:8px;cursor:pointer;" onclick="if(typeof scrollToMessage===\'function\')scrollToMessage(' + msg.id + ')">'
+        return '<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:12px;background:var(--primary-bg);border:1px solid var(--border-color);margin-bottom:8px;cursor:pointer;" data-search-msg-id="' + String(msg.id).replace(/&/g,'&amp;').replace(/"/g,'&quot;') + '" onclick="if(typeof scrollToMessage===\'function\')scrollToMessage(' + JSON.stringify(String(msg.id)).replace(/"/g,'&quot;') + ')">'
             + avatarHtml
             + '<div style="flex:1;min-width:0;">'
             + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">'
@@ -602,67 +602,12 @@ window._runMsgSearch = function() {
 };
 
 window.scrollToMessage = function(msgId) {
-    // 关闭统计弹窗（hideModal 可能不在全局作用域，直接操作 DOM）
-    var statsModal = document.getElementById('stats-modal');
-    if (statsModal) {
-        var content = statsModal.querySelector('.modal-content');
-        if (content) {
-            content.style.opacity = '0';
-            content.style.transform = 'translateY(20px) scale(0.95)';
-        }
-        if (statsModal._hideTimeout) clearTimeout(statsModal._hideTimeout);
-        statsModal._hideTimeout = setTimeout(function() {
-            statsModal.style.display = 'none';
-        }, 300);
+    if (typeof window.locateMessageInChat === 'function') {
+        window.locateMessageInChat(msgId, { closeDelay: 140, chatDelay: 70, heavyThreshold: 420 });
+        return;
     }
-
-    // 延迟等弹窗关闭动画完成，再尝试滚动
-    setTimeout(function() {
-        var el = document.querySelector('[data-id="' + msgId + '"]') || document.querySelector('[data-msg-id="' + msgId + '"]');
-
-        if (el) {
-            // 消息已在 DOM 中，直接滚动
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            el.style.transition = 'background 0.3s';
-            el.style.background = 'rgba(var(--accent-color-rgb,180,140,100),0.18)';
-            setTimeout(function() { el.style.background = ''; }, 1500);
-        } else {
-            // 消息不在当前视图中，需要加载更多历史消息
-            var msgIndex = -1;
-            if (typeof messages !== 'undefined') {
-                for (var i = 0; i < messages.length; i++) {
-                    if (String(messages[i].id) === String(msgId)) {
-                        msgIndex = i;
-                        break;
-                    }
-                }
-            }
-            if (msgIndex === -1) {
-                if (typeof showNotification === 'function') showNotification('消息可能已被删除', 'info');
-                return;
-            }
-            // 增加显示的消息数量以包含目标消息
-            if (typeof displayedMessageCount !== 'undefined') {
-                var needed = messages.length - msgIndex;
-                if (needed > displayedMessageCount) {
-                    displayedMessageCount = needed + 10; // 多加载一些
-                    if (typeof renderMessages === 'function') renderMessages(false);
-                    // 渲染完成后再尝试滚动
-                    setTimeout(function() {
-                        var el2 = document.querySelector('[data-id="' + msgId + '"]') || document.querySelector('[data-msg-id="' + msgId + '"]');
-                        if (el2) {
-                            el2.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            el2.style.transition = 'background 0.3s';
-                            el2.style.background = 'rgba(var(--accent-color-rgb,180,140,100),0.18)';
-                            setTimeout(function() { el2.style.background = ''; }, 1500);
-                        } else {
-                            if (typeof showNotification === 'function') showNotification('消息定位失败', 'info');
-                        }
-                    }, 200);
-                }
-            }
-        }
-    }, 350);
+    var el = document.querySelector('[data-id="' + String(msgId).replace(/"/g, '\"') + '"]') || document.querySelector('[data-msg-id="' + String(msgId).replace(/"/g, '\"') + '"]');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 };
 
 /* ===== 消息统计 - 日历热力图时间轴 ===== */
@@ -784,7 +729,7 @@ window.scrollToMessage = function(msgId) {
 
             html += '<div class="' + classes + '" data-date="' + dateStr + '" data-count="' + count + '"';
             if (firstId) {
-                html += ' onclick="window._jumpToDayMsg(' + firstId + ')"';
+                html += ' onclick="window._jumpToDayMsg(' + JSON.stringify(String(firstId)).replace(/"/g,'&quot;') + ')"';
             }
             html += ' style="background-color:' + bgColor + ';">';
             html += '  <span class="tl-day-num">' + day + '</span>';
@@ -825,66 +770,10 @@ window.scrollToMessage = function(msgId) {
 
     // 点击日期跳转到对应日期的第一条消息
     window._jumpToDayMsg = function(msgId) {
-        // 关闭统计弹窗（hideModal 可能不在全局作用域，直接操作 DOM）
-        var statsModal = document.getElementById('stats-modal');
-        if (statsModal) {
-            var content = statsModal.querySelector('.modal-content');
-            if (content) {
-                content.style.opacity = '0';
-                content.style.transform = 'translateY(20px) scale(0.95)';
-            }
-            if (statsModal._hideTimeout) clearTimeout(statsModal._hideTimeout);
-            statsModal._hideTimeout = setTimeout(function() {
-                statsModal.style.display = 'none';
-            }, 300);
+        if (typeof window.locateMessageInChat === 'function') {
+            window.locateMessageInChat(msgId, { closeDelay: 140, chatDelay: 70, heavyThreshold: 420 });
+            return;
         }
-
-        // 延迟等弹窗关闭动画完成，再尝试滚动
-        setTimeout(function() {
-            var el = document.querySelector('[data-id="' + msgId + '"]') || document.querySelector('[data-msg-id="' + msgId + '"]');
-
-            if (el) {
-                // 消息已在 DOM 中，直接滚动
-                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                el.style.transition = 'background 0.3s';
-                el.style.background = 'rgba(var(--accent-color-rgb,180,140,100),0.18)';
-                setTimeout(function() { el.style.background = ''; }, 1500);
-            } else {
-                // 消息不在当前视图中，需要加载更多历史消息
-                var msgIndex = -1;
-                if (typeof messages !== 'undefined') {
-                    for (var i = 0; i < messages.length; i++) {
-                        if (String(messages[i].id) === String(msgId)) {
-                            msgIndex = i;
-                            break;
-                        }
-                    }
-                }
-                if (msgIndex === -1) {
-                    if (typeof showNotification === 'function') showNotification('消息可能已被删除', 'info');
-                    return;
-                }
-                // 增加显示的消息数量以包含目标消息
-                if (typeof displayedMessageCount !== 'undefined') {
-                    var needed = messages.length - msgIndex;
-                    if (needed > displayedMessageCount) {
-                        displayedMessageCount = needed + 10; // 多加载一些
-                        if (typeof renderMessages === 'function') renderMessages(false);
-                        // 渲染完成后再尝试滚动
-                        setTimeout(function() {
-                            var el2 = document.querySelector('[data-id="' + msgId + '"]') || document.querySelector('[data-msg-id="' + msgId + '"]');
-                            if (el2) {
-                                el2.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                el2.style.transition = 'background 0.3s';
-                                el2.style.background = 'rgba(var(--accent-color-rgb,180,140,100),0.18)';
-                                setTimeout(function() { el2.style.background = ''; }, 1500);
-                            } else {
-                                if (typeof showNotification === 'function') showNotification('消息定位失败', 'info');
-                            }
-                        }, 200);
-                    }
-                }
-            }
-        }, 350);
+        if (typeof window.scrollToMessage === 'function') window.scrollToMessage(msgId);
     };
 })();

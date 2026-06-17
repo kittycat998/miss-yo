@@ -73,6 +73,10 @@
 }
 
 function loadMoreHistory() {
+    if (window.__chatLocateWindow) {
+        if (typeof showNotification === 'function') showNotification('正在定位查看旧消息，先点“回到最新消息”再加载更多', 'info', 1600);
+        return;
+    }
     const historyLoader = document.getElementById('history-loader');
     const container = DOMElements && DOMElements.chatContainer;
     const currentOldestMsgIndex = messages.length - displayedMessageCount;
@@ -2014,18 +2018,29 @@ function _updateReadReceiptsDOM() {
 function renderMessages(preserveScroll = false) {
     const container = DOMElements.chatContainer;
     const totalMessages = messages.length;
-    const startIndex = Math.max(0, totalMessages - displayedMessageCount);
-    const msgsToRender = messages.slice(startIndex);
+    let startIndex = Math.max(0, totalMessages - displayedMessageCount);
+    let endIndex = totalMessages;
+    const locateWindow = window.__chatLocateWindow;
+    const locating = !!(locateWindow && typeof locateWindow.start === 'number' && typeof locateWindow.end === 'number');
+
+    if (locating) {
+        startIndex = Math.max(0, Math.min(totalMessages, locateWindow.start));
+        endIndex = Math.max(startIndex, Math.min(totalMessages, locateWindow.end));
+    }
+
+    const msgsToRender = messages.slice(startIndex, endIndex);
 
     const historyLoader = document.getElementById('history-loader');
     if (historyLoader) {
-        historyLoader.style.display = startIndex > 0 ? 'flex' : 'none';
+        historyLoader.style.display = (!locating && startIndex > 0) ? 'flex' : 'none';
     }
 
     DOMElements.emptyState.style.display = totalMessages === 0 ? 'flex' : 'none';
 
     const oldScrollHeight = container.scrollHeight;
     const oldScrollTop = container.scrollTop;
+    const suppressAutoScroll = !!window.__suppressNextRenderAutoScroll;
+    window.__suppressNextRenderAutoScroll = false;
     
     container.innerHTML = '';
 
@@ -2035,6 +2050,14 @@ function renderMessages(preserveScroll = false) {
     spacer.style.flex = '1';
     fragment.appendChild(spacer);
 
+    if (locating) {
+        const topNotice = document.createElement('div');
+        topNotice.className = 'message-locate-notice';
+        topNotice.style.cssText = 'align-self:center;margin:8px auto 10px;padding:6px 10px;border-radius:999px;background:rgba(var(--accent-color-rgb,180,140,100),0.10);color:var(--text-secondary);font-size:11px;line-height:1.4;max-width:86%;text-align:center;';
+        topNotice.innerHTML = '已定位到搜索结果附近，只渲染附近消息，避免长记录卡顿 · <button type="button" onclick="window.exitMessageLocateMode&&window.exitMessageLocateMode()" style="border:none;background:none;color:var(--accent-color);font-size:11px;font-weight:700;padding:0;">回到最新消息</button>';
+        fragment.appendChild(topNotice);
+    }
+
     let lastSenderRef = { current: null };
     msgsToRender.forEach((msg, i) => {
         const prevMsg = i > 0 ? msgsToRender[i - 1] : (startIndex > 0 ? messages[startIndex - 1] : null);
@@ -2043,17 +2066,206 @@ function renderMessages(preserveScroll = false) {
         fragment.appendChild(msgFragment);
     });
 
+    if (locating) {
+        const bottomNotice = document.createElement('div');
+        bottomNotice.className = 'message-locate-notice-bottom';
+        bottomNotice.style.cssText = 'align-self:center;margin:10px auto 8px;padding:6px 10px;border-radius:999px;background:rgba(var(--accent-color-rgb,180,140,100),0.10);color:var(--text-secondary);font-size:11px;line-height:1.4;max-width:86%;text-align:center;';
+        bottomNotice.innerHTML = '<button type="button" onclick="window.exitMessageLocateMode&&window.exitMessageLocateMode()" style="border:none;background:none;color:var(--accent-color);font-size:11px;font-weight:700;padding:0;">退出定位查看，回到最新消息</button>';
+        fragment.appendChild(bottomNotice);
+    }
+
     container.appendChild(fragment);
 
     if (preserveScroll) {
         const newScrollHeight = container.scrollHeight;
         container.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight);
-    } else {
+    } else if (!suppressAutoScroll && !locating) {
         requestAnimationFrame(() => {
             container.scrollTop = container.scrollHeight;
         });
     }
 }
+
+window.exitMessageLocateMode = function() {
+    window.__chatLocateWindow = null;
+    window.__suppressNextRenderAutoScroll = false;
+    displayedMessageCount = Math.min(messages.length, (typeof HISTORY_BATCH_SIZE !== 'undefined' ? HISTORY_BATCH_SIZE : 20));
+    if (typeof renderMessages === 'function') renderMessages(false);
+};
+
+
+window.openChatStatsModal = function(source) {
+    try {
+        if (typeof window.hideMomentsPage === 'function') {
+            const moments = document.getElementById('moments-container');
+            if (moments && (moments.classList.contains('active') || moments.style.display === 'block' || moments.style.display === 'flex')) {
+                window.hideMomentsPage();
+            }
+        }
+    } catch(e) {}
+    try {
+        const home = document.getElementById('home-container');
+        if (home && (home.classList.contains('active') || home.style.display === 'flex' || home.style.display === 'block')) {
+            if (typeof window.hideHomePage === 'function') window.hideHomePage();
+            else {
+                home.classList.remove('active');
+                home.style.display = 'none';
+                const bg = document.getElementById('home-page-bg');
+                const chatArea = document.querySelector('.main-chat-area');
+                const header = document.querySelector('.header');
+                const input = document.querySelector('.input-area-wrapper');
+                if (bg) bg.style.display = 'none';
+                if (chatArea) chatArea.style.display = '';
+                if (header) { header.style.display = ''; header.style.visibility = ''; }
+                if (input) { input.style.display = ''; input.style.visibility = ''; }
+                document.body.classList.remove('home-active');
+            }
+        }
+    } catch(e) {}
+
+    try {
+        const modal = document.getElementById('stats-modal');
+        if (!modal) return;
+        if (typeof renderStatsContent === 'function') renderStatsContent();
+        if (typeof switchStatsTab === 'function') switchStatsTab('stats');
+        // 统计本体回到聊天环境打开；主页图标/底栏只作为跳转入口，不再用 homeShowModal 挂在主页层。
+        if (typeof showModal === 'function') showModal(modal);
+        else {
+            modal.style.display = 'flex';
+            modal.style.zIndex = '60000';
+        }
+    } catch(e) {
+        console.error('[stats] 打开消息统计失败:', e);
+        if (typeof showNotification === 'function') showNotification('消息统计打开失败，请刷新重试', 'error');
+    }
+};
+
+window.locateMessageInChat = function(msgId, opts) {
+    opts = opts || {};
+    msgId = String(msgId || '');
+    if (!msgId) return;
+
+    function cssEscape(v) {
+        try { return (window.CSS && CSS.escape) ? CSS.escape(String(v)) : String(v).replace(/"/g, '\"'); }
+        catch(e) { return String(v).replace(/"/g, '\"'); }
+    }
+    function ensureChatVisible(done) {
+        try {
+            if (typeof window.hideMomentsPage === 'function') {
+                const moments = document.getElementById('moments-container');
+                if (moments && (moments.style.display !== 'none' && moments.classList.contains('active'))) window.hideMomentsPage();
+            }
+        } catch(e) {}
+        try {
+            const home = document.getElementById('home-container');
+            if (home && (home.classList.contains('active') || home.style.display === 'flex' || home.style.display === 'block')) {
+                if (typeof window.hideHomePage === 'function') window.hideHomePage();
+                else {
+                    home.classList.remove('active');
+                    home.style.display = 'none';
+                    const bg = document.getElementById('home-page-bg');
+                    const chatArea = document.querySelector('.main-chat-area');
+                    const header = document.querySelector('.header');
+                    const input = document.querySelector('.input-area-wrapper');
+                    if (bg) bg.style.display = 'none';
+                    if (chatArea) chatArea.style.display = '';
+                    if (header) header.style.display = '';
+                    if (input) input.style.display = '';
+                    document.body.classList.remove('home-active');
+                }
+            }
+        } catch(e) {}
+        setTimeout(done, opts.chatDelay || 80);
+    }
+    function closeStatsModal(done) {
+        const m = document.getElementById('stats-modal');
+        if (!m || m.style.display === 'none') { done(); return; }
+        const content = m.querySelector('.modal-content');
+        if (content) {
+            content.style.opacity = '0';
+            content.style.transform = 'translateY(20px) scale(0.95)';
+        }
+        if (m._hideTimeout) clearTimeout(m._hideTimeout);
+        m._hideTimeout = setTimeout(function() {
+            m.style.display = 'none';
+            if (content) {
+                content.style.opacity = '';
+                content.style.transform = '';
+            }
+            done();
+        }, opts.closeDelay || 160);
+    }
+    function findTarget() {
+        const sid = cssEscape(msgId);
+        return document.querySelector('[data-msg-id="' + sid + '"]') ||
+               document.querySelector('[data-id="' + sid + '"]') ||
+               document.querySelector('[data-message-id="' + sid + '"]');
+    }
+    function highlightTarget(target) {
+        if (!target) return false;
+        const container = DOMElements && DOMElements.chatContainer;
+        if (container && target.offsetParent !== null) {
+            const targetTop = target.offsetTop - (container.clientHeight / 2) + (target.offsetHeight / 2);
+            container.scrollTo({ top: Math.max(0, targetTop), behavior: opts.instant ? 'auto' : 'smooth' });
+        } else {
+            target.scrollIntoView({ behavior: opts.instant ? 'auto' : 'smooth', block: 'center' });
+        }
+        target.classList.add('msg-highlight');
+        target.style.transition = 'background .3s ease, box-shadow .3s ease';
+        target.style.background = 'rgba(var(--accent-color-rgb,180,140,100),.16)';
+        target.style.boxShadow = '0 0 0 2px rgba(var(--accent-color-rgb,180,140,100),.26)';
+        setTimeout(function(){
+            target.classList.remove('msg-highlight');
+            target.style.background = '';
+            target.style.boxShadow = '';
+        }, 1800);
+        return true;
+    }
+    function doLocate() {
+        if (highlightTarget(findTarget())) return;
+        if (typeof messages === 'undefined' || !Array.isArray(messages)) return;
+        const msgIndex = messages.findIndex(function(m){ return String(m.id) === String(msgId); });
+        if (msgIndex === -1) {
+            if (typeof showNotification === 'function') showNotification('消息可能已被删除', 'info', 1800);
+            return;
+        }
+
+        const needed = messages.length - msgIndex;
+        const batch = typeof HISTORY_BATCH_SIZE !== 'undefined' ? HISTORY_BATCH_SIZE : 20;
+        const heavyThreshold = opts.heavyThreshold || 420;
+        window.__suppressNextRenderAutoScroll = true;
+
+        if (needed > heavyThreshold) {
+            const before = opts.before || 36;
+            const after = opts.after || 90;
+            window.__chatLocateWindow = {
+                id: msgId,
+                start: Math.max(0, msgIndex - before),
+                end: Math.min(messages.length, msgIndex + after + 1)
+            };
+        } else {
+            window.__chatLocateWindow = null;
+            if (typeof displayedMessageCount !== 'undefined' && needed > displayedMessageCount) {
+                displayedMessageCount = Math.min(messages.length, Math.max(needed + 5, batch));
+            }
+        }
+
+        if (typeof renderMessages === 'function') {
+            renderMessages(false);
+            requestAnimationFrame(function(){
+                requestAnimationFrame(function(){
+                    if (!highlightTarget(findTarget())) {
+                        setTimeout(function(){
+                            if (!highlightTarget(findTarget()) && typeof showNotification === 'function') showNotification('消息定位失败', 'info', 1800);
+                        }, 80);
+                    }
+                });
+            });
+        }
+    }
+
+    closeStatsModal(function(){ ensureChatVisible(doLocate); });
+};
 
 const addMessage = (message) => {
     if (!(message.timestamp instanceof Date)) message.timestamp = new Date(message.timestamp);

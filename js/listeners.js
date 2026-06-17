@@ -1802,8 +1802,13 @@ if (_scheduleSendCheckbox && _scheduleTimeContainer) {
             const _statsFuncEl = document.getElementById('stats-function');
             if (_statsFuncEl) _statsFuncEl.addEventListener('click', () => {
                 hideModal(DOMElements.advancedModal.modal);
-                renderStatsContent();
-                showModal(DOMElements.statsModal.modal);
+                setTimeout(() => {
+                    if (typeof window.openChatStatsModal === 'function') window.openChatStatsModal('advanced');
+                    else {
+                        if (typeof renderStatsContent === 'function') renderStatsContent();
+                        showModal(DOMElements.statsModal.modal);
+                    }
+                }, 120);
             });
 
             const coinFunctionBtn = document.getElementById('coin-function');
