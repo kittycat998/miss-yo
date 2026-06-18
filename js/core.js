@@ -354,6 +354,45 @@ const loadData = async () => {
             }
         };
 
+        // 只针对摸鱼小记做轻量同源会话兜底：不全库深扫，只找已知命名键。
+        // 防止 SESSION_ID/入口切换后，旧记录还在别的会话键里但当前页显示空。
+        const recoverMoyuArrayFromSiblingSessions = async (baseKey, currentValue) => {
+            if (Array.isArray(currentValue) && currentValue.length > 0) return currentValue;
+            const currentFullKey = getStorageKey(baseKey);
+            const suffix = '_' + baseKey;
+            const candidates = [];
+            const pushCandidate = (source, key, value) => {
+                if (key === currentFullKey) return;
+                if (!Array.isArray(value) || value.length === 0) return;
+                candidates.push({ source, key, value, count: value.length });
+            };
+            try {
+                const keys = await localforage.keys();
+                for (const key of keys || []) {
+                    if (!key || !key.startsWith(APP_PREFIX) || !key.endsWith(suffix)) continue;
+                    try { pushCandidate('localforage', key, await localforage.getItem(key)); } catch (_) {}
+                }
+            } catch (e) {}
+            try {
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    if (!key || !key.startsWith(APP_PREFIX) || !key.endsWith(suffix)) continue;
+                    try {
+                        const raw = localStorage.getItem(key);
+                        const value = raw ? JSON.parse(raw) : null;
+                        pushCandidate('localStorage', key, value);
+                    } catch (_) {}
+                }
+            } catch (e) {}
+            candidates.sort((a, b) => b.count - a.count);
+            if (candidates.length) {
+                console.warn(`[loadData] 当前 ${baseKey} 为空，已从同源旧会话恢复 ${candidates[0].count} 条：`, candidates[0].key);
+                try { await localforage.setItem(currentFullKey, candidates[0].value); } catch (_) {}
+                return candidates[0].value;
+            }
+            return currentValue;
+        };
+
         const savedSettings = getVal(0);
         const savedMessages = getVal(1);
         const savedBgGallery = getVal(2);
@@ -380,9 +419,13 @@ const loadData = async () => {
         const savedKaomojiLibrary = await safeLfGet('kaomojiLibrary');
         const savedKaomojiGroups = await safeLfGet('kaomojiGroups');
         const savedStickerGroups = await safeLfGet('customStickerGroups');
-        const savedMoyuRecords = await safeLfGet('moyuRecords');
-        const savedMoyuLocations = await safeLfGet('moyuLocations');
-        const savedMoyuActivities = await safeLfGet('moyuActivities');
+        let savedMoyuRecords = await safeLfGet('moyuRecords');
+        let savedMoyuLocations = await safeLfGet('moyuLocations');
+        let savedMoyuActivities = await safeLfGet('moyuActivities');
+        savedMoyuRecords = await recoverMoyuArrayFromSiblingSessions('moyuRecords', savedMoyuRecords);
+        savedMoyuLocations = await recoverMoyuArrayFromSiblingSessions('moyuLocations', savedMoyuLocations);
+        savedMoyuActivities = await recoverMoyuArrayFromSiblingSessions('moyuActivities', savedMoyuActivities);
+
         const savedCurrentMoyuRecord = await safeLfGet('currentMoyuRecord');
         const savedMoyuUnread = await safeLfGet('moyuUnread');
         const savedMoyuWorkSession = await safeLfGet('moyuWorkSession');
@@ -741,7 +784,7 @@ const saveData = async () => {
         { key: 'customVoices',            val: () => _safeSetPreserveNonEmpty('customVoices', customVoices || []) },
         { key: 'customVoiceGroups',       val: () => _safeSetPreserveNonEmpty('customVoiceGroups', window.customVoiceGroups || []) },
         { key: 'kaomojiLibrary',          val: () => _safeSetPreserveNonEmpty('kaomojiLibrary', kaomojiLibrary || []) },
-        { key: 'moyuRecords',             val: () => localforage.setItem(getStorageKey('moyuRecords'), moyuRecords || []) },
+        { key: 'moyuRecords',             val: () => _safeSetPreserveNonEmpty('moyuRecords', moyuRecords || []) },
         { key: 'moyuLocations',           val: () => _safeSetPreserveNonEmpty('moyuLocations', moyuLocations || []) },
         { key: 'moyuActivities',          val: () => _safeSetPreserveNonEmpty('moyuActivities', window.moyuActivities || []) },
         { key: 'currentMoyuRecord',       val: () => localforage.setItem(getStorageKey('currentMoyuRecord'), window.currentMoyuRecord || null) },

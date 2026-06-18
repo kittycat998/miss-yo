@@ -2113,7 +2113,10 @@
   const VISITOR_STORAGE_KEY = 'moments_visitor_records';
   const VISITOR_LAST_ONLINE_KEY = 'moments_visitor_last_online';
   const VISITOR_LAST_VIEWED_KEY = 'moments_visitor_last_viewed_count';
+  const VISITOR_LAST_GENERATED_KEY = 'moments_visitor_last_generated';
   const VISITOR_MAX_PER_DAY = 10;
+  const VISITOR_ONLINE_INTERVAL = 2 * 60 * 1000;
+  const VISITOR_ONLINE_PROBABILITY = 0.35;
 
   function visitorGet(key) {
     try {
@@ -2149,6 +2152,7 @@
       migrateVisitorLegacyKey(VISITOR_STORAGE_KEY);
       migrateVisitorLegacyKey(VISITOR_LAST_ONLINE_KEY);
       migrateVisitorLegacyKey(VISITOR_LAST_VIEWED_KEY);
+      migrateVisitorLegacyKey(VISITOR_LAST_GENERATED_KEY);
       const data = visitorGet(VISITOR_STORAGE_KEY);
       visitorRecords = data ? JSON.parse(data) : [];
       if (!Array.isArray(visitorRecords)) visitorRecords = [];
@@ -2185,6 +2189,7 @@
     const ts = timestamp || Date.now();
     visitorRecords.unshift({ id: ts.toString(36) + Math.random().toString(36).substr(2,5), timestamp: ts });
     visitorUnreadCount++;
+    visitorSet(VISITOR_LAST_GENERATED_KEY, String(ts));
     saveVisitorRecords();
     updateVisitorBadge();
   }
@@ -2214,14 +2219,30 @@
     }
   }
 
+  function kickstartVisitorGenerator() {
+    const now = Date.now();
+    if (getTodayVisitorCount() >= VISITOR_MAX_PER_DAY) return;
+    const lastGenerated = parseInt(visitorGet(VISITOR_LAST_GENERATED_KEY) || '0') || 0;
+    const shouldKick = visitorRecords.length === 0 || (now - lastGenerated > 30 * 60 * 1000);
+    if (!shouldKick) return;
+    const delay = visitorRecords.length === 0 ? 3500 : 12000 + Math.floor(Math.random() * 18000);
+    setTimeout(() => {
+      if (getTodayVisitorCount() >= VISITOR_MAX_PER_DAY) return;
+      const latestGenerated = parseInt(visitorGet(VISITOR_LAST_GENERATED_KEY) || '0') || 0;
+      if (visitorRecords.length === 0 || Date.now() - latestGenerated > 30 * 60 * 1000) {
+        generateOneVisitorRecord(Date.now());
+      }
+    }, delay);
+  }
+
   function startOnlineVisitorTimer() {
     if (visitorTimerInterval) clearInterval(visitorTimerInterval);
     visitorSet(VISITOR_LAST_ONLINE_KEY, Date.now().toString());
     visitorTimerInterval = setInterval(() => {
       if (getTodayVisitorCount() >= VISITOR_MAX_PER_DAY) return;
-      if (Math.random() < 0.20) generateOneVisitorRecord(Date.now());
+      if (Math.random() < VISITOR_ONLINE_PROBABILITY) generateOneVisitorRecord(Date.now());
       visitorSet(VISITOR_LAST_ONLINE_KEY, Date.now().toString());
-    }, 5 * 60 * 1000);
+    }, VISITOR_ONLINE_INTERVAL);
   }
 
   function stopOnlineVisitorTimer() {
@@ -5169,6 +5190,7 @@
       loadVisitorRecords();
       generateOfflineVisitors();
       startOnlineVisitorTimer();
+      kickstartVisitorGenerator();
       updateVisitorBadge();
       startPartnerMomentScheduler();
     } catch (e) {

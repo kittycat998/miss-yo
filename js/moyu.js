@@ -652,6 +652,10 @@ window.deleteMoyuRecord = function (index) {
 
     if (moyuRecords && index >= 0 && index < moyuRecords.length) {
         moyuRecords.splice(index, 1);
+        if (moyuRecords.length === 0) {
+            window.__allowEmptyStorageKeys = window.__allowEmptyStorageKeys || {};
+            window.__allowEmptyStorageKeys.moyuRecords = true;
+        }
         if (typeof throttledSaveData === 'function') throttledSaveData();
         window.renderMoyuStats();
         window.renderMoyuRecords();
