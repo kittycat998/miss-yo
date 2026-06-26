@@ -22,6 +22,62 @@
             .replace(/'/g, '&#39;');
     }
 
+    function getReplyCardPoolForRedPacket() {
+        var raw = [];
+        try {
+            if (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) raw = raw.concat(customReplies);
+            if (window._customReplies && Array.isArray(window._customReplies)) raw = raw.concat(window._customReplies);
+        } catch (_) {}
+        var seen = Object.create(null);
+        return raw.map(function (x) { return String(x == null ? '' : x).trim(); })
+            .filter(function (x) {
+                if (!x || x.length > 50) return false;
+                if (seen[x]) return false;
+                seen[x] = true;
+                return true;
+            });
+    }
+
+    function pickRandomReplyCardForRedPacket() {
+        var pool = getReplyCardPoolForRedPacket();
+        return pool.length ? pool[Math.floor(Math.random() * pool.length)] : '';
+    }
+
+    function sampleReplyCardsForRedPacket(maxCount) {
+        var pool = getReplyCardPoolForRedPacket();
+        var out = [];
+        while (pool.length && out.length < maxCount) {
+            var idx = Math.floor(Math.random() * pool.length);
+            out.push(pool.splice(idx, 1)[0]);
+        }
+        return out;
+    }
+
+    function saveTransferDataNow() {
+        try {
+            if (typeof getStorageKey === 'function' && typeof localforage !== 'undefined') {
+                localforage.setItem(getStorageKey('transferData'), transferData || null).catch(function(e){
+                    console.warn('[red-packet] transferData localforage 保存失败', e);
+                });
+            }
+        } catch (e) {
+            console.warn('[red-packet] transferData localforage 保存异常', e);
+        }
+        try {
+            if (typeof getStorageKey === 'function') {
+                localStorage.setItem(getStorageKey('transferData'), JSON.stringify(transferData || null));
+            }
+        } catch (e) {
+            console.warn('[red-packet] transferData localStorage 兜底保存失败', e);
+        }
+        try {
+            if (typeof window.saveData === 'function') window.saveData();
+            else if (typeof window.throttledSaveData === 'function') window.throttledSaveData();
+        } catch (e) {
+            console.warn('[red-packet] saveData 保存失败', e);
+        }
+    }
+
     /** 生成唯一 ID */
     function genId() {
         return 'rp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
@@ -137,11 +193,13 @@
         overlay.style.setProperty('z-index', String(window.__nextOverlayZ ? window.__nextOverlayZ() : 90010), 'important');
         overlay.onclick = function (e) { if (e.target === overlay) overlay.remove(); };
 
-        var quickMsgs = isFestival
-            ? festival.messages
+        var fixedQuickMsgs = isFestival
+            ? festival.messages.slice()
             : ['恭喜发财', '新年快乐', '大吉大利', '好运连连', '辛苦了~', '买杯奶茶'];
+        var cardQuickMsgs = sampleReplyCardsForRedPacket(4);
+        var quickMsgs = fixedQuickMsgs.concat(cardQuickMsgs);
 
-        var defaultMsg = isFestival ? festival.messages[0] : '';
+        var defaultMsg = isFestival ? festival.messages[0] : (Math.random() < 0.35 ? pickRandomReplyCardForRedPacket() : '');
 
         overlay.innerHTML =
             '<div style="width:100%;max-width:420px;background:var(--primary-bg,#fff);border-radius:20px 20px 0 0;padding:0;animation:slideUp 0.3s cubic-bezier(0.34,1.56,0.64,1);max-height:min(85vh,calc(100dvh - 20px));overflow-y:auto;-webkit-overflow-scrolling:touch;">' +
@@ -161,12 +219,14 @@
                         '<div style="margin-top:10px;font-size:12px;color:var(--text-secondary,#888);">余额: &yen;' + fmt(transferData.myBalance) + '</div>' +
                     '</div>' +
                     // 留言输入
-                    '<input type="text" placeholder="添加留言..." id="rp-send-message" maxlength="50" value="' + defaultMsg + '" style="width:100%;height:40px;border:1.5px solid var(--border-color,#e8e8e8);border-radius:10px;padding:0 14px;font-size:14px;outline:none;background:var(--secondary-bg,#f5f5f5);color:var(--text-primary,#1a1a1a);transition:border-color 0.2s;box-sizing:border-box;" />' +
+                    '<input type="text" placeholder="添加留言..." id="rp-send-message" maxlength="50" value="' + rpEscapeHtml(defaultMsg) + '" style="width:100%;height:40px;border:1.5px solid var(--border-color,#e8e8e8);border-radius:10px;padding:0 14px;font-size:14px;outline:none;background:var(--secondary-bg,#f5f5f5);color:var(--text-primary,#1a1a1a);transition:border-color 0.2s;box-sizing:border-box;" />' +
                     // 快捷留言
                     '<div id="rp-quick-msgs" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">' +
                         quickMsgs.map(function (m, i) {
-                            return '<span data-msg="' + m + '" style="padding:6px 14px;border-radius:16px;border:1px solid var(--border-color,#e8e8e8);background:var(--secondary-bg,#f5f5f5);font-size:12px;color:var(--text-secondary,#888);cursor:pointer;transition:all 0.15s;' + (i === 0 ? 'border-color:var(--accent-color,#b8a9c9);background:rgba(184,169,201,0.08);color:var(--accent-dark,#9b8ab5);' : '') + '">' + m + '</span>';
+                            var tag = cardQuickMsgs.indexOf(m) !== -1 ? '字卡 · ' : '';
+                            return '<span data-msg-index="' + i + '" style="padding:6px 14px;border-radius:16px;border:1px solid var(--border-color,#e8e8e8);background:var(--secondary-bg,#f5f5f5);font-size:12px;color:var(--text-secondary,#888);cursor:pointer;transition:all 0.15s;' + (i === 0 ? 'border-color:var(--accent-color,#b8a9c9);background:rgba(184,169,201,0.08);color:var(--accent-dark,#9b8ab5);' : '') + '">' + rpEscapeHtml(tag + m) + '</span>';
                         }).join('') +
+                        '<span data-random-card="1" style="padding:6px 14px;border-radius:16px;border:1px dashed var(--accent-color,#b8a9c9);background:rgba(184,169,201,0.06);font-size:12px;color:var(--accent-dark,#9b8ab5);cursor:pointer;transition:all 0.15s;"><i class="fas fa-random" style="font-size:10px;margin-right:4px;"></i>随机字卡</span>' +
                     '</div>' +
                     // 发送按钮
                     '<button id="rp-send-btn" disabled style="width:100%;height:48px;border:none;border-radius:12px;background:#c4453c;color:#fff;font-size:16px;font-weight:600;cursor:pointer;margin-top:24px;transition:opacity 0.15s;opacity:0.4;">发送红包</button>' +
@@ -183,14 +243,26 @@
         overlay.querySelectorAll('#rp-quick-msgs span').forEach(function (btn) {
             btn.onclick = function () {
                 overlay.querySelectorAll('#rp-quick-msgs span').forEach(function (b) {
-                    b.style.borderColor = 'var(--border-color,#e8e8e8)';
-                    b.style.background = 'var(--secondary-bg,#f5f5f5)';
-                    b.style.color = 'var(--text-secondary,#888)';
+                    b.style.borderColor = b.dataset.randomCard ? 'var(--accent-color,#b8a9c9)' : 'var(--border-color,#e8e8e8)';
+                    b.style.borderStyle = b.dataset.randomCard ? 'dashed' : 'solid';
+                    b.style.background = b.dataset.randomCard ? 'rgba(184,169,201,0.06)' : 'var(--secondary-bg,#f5f5f5)';
+                    b.style.color = b.dataset.randomCard ? 'var(--accent-dark,#9b8ab5)' : 'var(--text-secondary,#888)';
                 });
                 btn.style.borderColor = 'var(--accent-color,#b8a9c9)';
+                btn.style.borderStyle = 'solid';
                 btn.style.background = 'rgba(184,169,201,0.08)';
                 btn.style.color = 'var(--accent-dark,#9b8ab5)';
-                msgInput.value = btn.dataset.msg;
+                if (btn.dataset.randomCard) {
+                    var picked = pickRandomReplyCardForRedPacket();
+                    if (!picked) {
+                        if (typeof window.showNotification === 'function') window.showNotification('字卡库里还没有可用句子', 'info');
+                        return;
+                    }
+                    msgInput.value = picked;
+                } else {
+                    var idx = Number(btn.dataset.msgIndex);
+                    msgInput.value = quickMsgs[idx] || '';
+                }
             };
         });
 
@@ -232,7 +304,7 @@
             transferData.records.push(record);
 
             // 保存
-            if (typeof window.throttledSaveData === 'function') window.throttledSaveData();
+            saveTransferDataNow();
 
             // 添加红包消息到聊天
             if (typeof addMessage === 'function') {
@@ -272,7 +344,7 @@
                     rpRecord.returnedAt = Date.now();
                     transferData.myBalance += rpRecord.amount;
 
-                    if (typeof window.throttledSaveData === 'function') window.throttledSaveData();
+                    saveTransferDataNow();
 
                     setTimeout(function () {
                         if (typeof addMessage === 'function') {
@@ -298,7 +370,7 @@
                     rpRecord.receivedAt = Date.now();
                     transferData.systemBalance += rpRecord.amount;
 
-                    if (typeof window.throttledSaveData === 'function') window.throttledSaveData();
+                    saveTransferDataNow();
 
                     setTimeout(function () {
                         // 收取方发送已领取样式的红包卡片
@@ -408,7 +480,7 @@
                     record.status = 'returned';
                     record.returnedAt = Date.now();
 
-                    if (typeof window.throttledSaveData === 'function') window.throttledSaveData();
+                    saveTransferDataNow();
 
                     // 更新弹窗为已退回状态
                     var panel = overlay.querySelector('#rp-receive-panel');
@@ -468,7 +540,7 @@
                 record.receivedAt = Date.now();
 
                 // 保存
-                if (typeof window.throttledSaveData === 'function') window.throttledSaveData();
+                saveTransferDataNow();
 
                 // 更新弹窗为已领取状态
                 var panel = overlay.querySelector('#rp-receive-panel');
@@ -573,7 +645,9 @@
             message = msgs[Math.floor(Math.random() * msgs.length)];
         } else {
             var normalMsgs = ['给你一个小红包~', '惊喜红包', '好运红包', '开心一下~', '一点心意'];
-            message = normalMsgs[Math.floor(Math.random() * normalMsgs.length)];
+            var cardMsgs = sampleReplyCardsForRedPacket(6);
+            var poolMsgs = normalMsgs.concat(cardMsgs);
+            message = poolMsgs[Math.floor(Math.random() * poolMsgs.length)];
         }
 
         // 创建记录
@@ -592,7 +666,7 @@
         _rpSendCountToday++;
 
         // 保存
-        if (typeof window.throttledSaveData === 'function') window.throttledSaveData();
+        saveTransferDataNow();
 
         // 添加红包消息到聊天
         if (typeof addMessage === 'function') {
@@ -645,7 +719,7 @@
         target.receivedAt = Date.now();
         transferData.systemBalance += target.amount;
 
-        if (typeof window.throttledSaveData === 'function') window.throttledSaveData();
+        saveTransferDataNow();
 
         // 收取方发送已领取样式的红包卡片
         if (typeof addMessage === 'function') {
@@ -686,7 +760,7 @@
         });
 
         if (expired.length > 0) {
-            if (typeof window.throttledSaveData === 'function') window.throttledSaveData();
+            saveTransferDataNow();
 
             // 发送过期提示
             if (typeof addMessage === 'function') {
@@ -736,7 +810,7 @@
         overlay.querySelector('#rp-bal-save').onclick = function () {
             transferData.myBalance = Math.round((parseFloat(overlay.querySelector('#rp-bal-my').value) || 0) * 100);
             transferData.systemBalance = Math.round((parseFloat(overlay.querySelector('#rp-bal-sys').value) || 0) * 100);
-            if (typeof window.throttledSaveData === 'function') window.throttledSaveData();
+            saveTransferDataNow();
             if (typeof window.showNotification === 'function') window.showNotification('余额已保存', 'success');
             overlay.remove();
         };

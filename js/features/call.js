@@ -5,7 +5,15 @@
     const KEY_POS      = 'callWindowPos';
     const KEY_SIZE     = 'callWindowSize';
     const KEY_PILL_POS = 'callPillPos';
+    const KEY_RANDOM_HANGUP_ENABLED = 'callRandomHangupEnabled';
+    const KEY_RANDOM_HANGUP_CHANCE  = 'callRandomHangupChance';
     const BG_LF_KEY    = 'callBgImageData';
+
+    function loadRandomHangupChance() {
+        const raw = localStorage.getItem(KEY_RANDOM_HANGUP_CHANCE);
+        const n = raw === null ? NaN : parseFloat(raw);
+        return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.18;
+    }
 
     const S = {
         enabled:         localStorage.getItem(KEY_ENABLED) !== 'false',
@@ -26,6 +34,9 @@
         incomingTimer:   null,
         connectingTimer: null,
         randomCallTimer: null,
+        randomHangupTimer: null,
+        randomHangupEnabled: localStorage.getItem(KEY_RANDOM_HANGUP_ENABLED) !== 'false',
+        randomHangupChance: loadRandomHangupChance(),
         isPartnerCall:   false,
     };
 
@@ -507,6 +518,7 @@ html:not([data-theme="dark"])[data-color-theme="black-white"] .message-sent{
         return img ? img.src : null;
     };
     const getName = () => window.settings?.partnerName || document.getElementById('partner-name')?.textContent.trim() || '对方';
+    const getMyName = () => window.settings?.myName || '我';
 
     function fillAv(avId) {
         const av = document.getElementById(avId), src = getAvSrc();
@@ -576,6 +588,95 @@ html:not([data-theme="dark"])[data-color-theme="black-white"] .message-sent{
         sendCallEvent('fa-video', '视频通话已结束', fmt(dur));
     }
 
+    function clearRandomHangupTimer() {
+        clearTimeout(S.randomHangupTimer);
+        S.randomHangupTimer = null;
+    }
+
+    function getPartnerHangupLabel(elapsedMs) {
+        const partnerName = getName();
+        const sec = Math.floor((Number(elapsedMs) || 0) / 1000);
+        let labels;
+        if (sec < 20) {
+            labels = [
+                `${partnerName}刚接通没多久就挂断了通话`,
+                `${partnerName}那边像是误触，通话突然断了`,
+                `${partnerName}那边刚有声音，就先挂断了`
+            ];
+        } else if (sec < 75) {
+            labels = [
+                `${partnerName}那边先挂了`,
+                `${partnerName}结束了通话`,
+                `${partnerName}临时有事，先挂断了通话`
+            ];
+        } else if (sec < 180) {
+            labels = [
+                `${partnerName}主动挂断了通话`,
+                `${partnerName}那边停了一下，随后挂断了通话`,
+                `${partnerName}说完后先结束了通话`
+            ];
+        } else {
+            labels = [
+                `${partnerName}主动结束了这通电话`,
+                `${partnerName}那边安静了一会儿，随后挂断了通话`,
+                `${partnerName}陪你聊了一会儿，然后先挂了`
+            ];
+        }
+        return labels[Math.floor(Math.random() * labels.length)];
+    }
+
+    function buildRandomHangupNodes(totalChance) {
+        // 这些是“通话进行中的检查节点”，不是接通后一次性定死的闹钟。
+        // weight 的总和为 1，配合条件概率计算，可以让整通电话最终挂断概率约等于设置里的总概率。
+        const defs = [
+            { min: 8,   max: 15,  weight: 0.12 },
+            { min: 18,  max: 32,  weight: 0.18 },
+            { min: 40,  max: 70,  weight: 0.24 },
+            { min: 85,  max: 140, weight: 0.22 },
+            { min: 170, max: 260, weight: 0.16 },
+            { min: 320, max: 520, weight: 0.08 }
+        ];
+        let consumed = 0;
+        return defs.map(def => {
+            const targetMs = (def.min + Math.random() * (def.max - def.min)) * 1000;
+            const priorChance = consumed;
+            const unconditional = totalChance * def.weight;
+            consumed += unconditional;
+            return {
+                targetMs,
+                // 到这个节点时，前面没触发过的条件下，再抽这一段该承担的概率。
+                chance: Math.max(0, Math.min(1, unconditional / Math.max(0.0001, 1 - priorChance)))
+            };
+        });
+    }
+
+    function scheduleRandomHangupAfterConnected() {
+        clearRandomHangupTimer();
+        if (!S.randomHangupEnabled || !S.active || !S.startTime) return;
+        const chance = Math.max(0, Math.min(1, Number(S.randomHangupChance) || 0));
+        if (chance <= 0) return;
+
+        const nodes = buildRandomHangupNodes(chance);
+        const runNode = index => {
+            if (!S.randomHangupEnabled || !S.active || !S.startTime) return;
+            const node = nodes[index];
+            if (!node) return;
+            const elapsed = Date.now() - S.startTime;
+            const wait = Math.max(0, node.targetMs - elapsed);
+            S.randomHangupTimer = setTimeout(() => {
+                if (!S.randomHangupEnabled || !S.active || !S.startTime) return;
+                const nowElapsed = Date.now() - S.startTime;
+                if (Math.random() < node.chance) {
+                    endCall({ label: getPartnerHangupLabel(nowElapsed), auto: true, by: 'partner' });
+                    return;
+                }
+                runNode(index + 1);
+            }, wait);
+        };
+
+        runNode(0);
+    }
+
     function startCall(isPartner) {
         if (!S.enabled) return;
         S.active = true; S.startTime = null; S.elapsed = 0;
@@ -627,16 +728,17 @@ html:not([data-theme="dark"])[data-color-theme="black-white"] .message-sent{
                 if (conn) conn.classList.remove('visible');
                 if (body) body.style.display = '';
                 tick();
+                scheduleRandomHangupAfterConnected();
             }, 1400 + Math.random() * 1400);
         }
     }
 
-    function endCall() {
+    function endCall(reason) {
         if (!S.active) return;
         const dur = S.elapsed;
         S.active = false; S.startTime = null;
         cancelAnimationFrame(S.timerRAF);
-        clearTimeout(S.connectingTimer); clearTimeout(S.incomingTimer);
+        clearTimeout(S.connectingTimer); clearTimeout(S.incomingTimer); clearRandomHangupTimer();
 
         ['call-window','call-mini-pill','call-incoming-overlay'].forEach(id => {
             const e = document.getElementById(id);
@@ -652,11 +754,17 @@ html:not([data-theme="dark"])[data-color-theme="black-white"] .message-sent{
 
         localStorage.setItem(KEY_POS,  JSON.stringify(S.pos));
         localStorage.setItem(KEY_SIZE, JSON.stringify(S.size));
-        sendCallMsg(dur);
+        if (reason && reason.label && dur >= 1500) sendCallEvent('fa-phone-slash', reason.label, fmt(dur));
+        else sendCallMsg(dur);
         if (typeof showNotification === 'function' && dur > 1500)
-            showNotification(`通话结束 · ${fmt(dur)}`, 'info', 3000);
+            showNotification(reason && reason.label ? reason.label + ' · ' + fmt(dur) : `通话结束 · ${fmt(dur)}`, 'info', 3000);
         else if (typeof showNotification === 'function' && dur <= 1500 && dur > 0)
             showNotification('通话已挂断', 'info', 2000);
+    }
+
+    function endCallByMe(evt) {
+        if (evt && typeof evt.stopPropagation === 'function') evt.stopPropagation();
+        endCall({ label: getMyName() + '挂断了通话', by: 'me' });
     }
 
     function showIncomingCall() {
@@ -841,8 +949,8 @@ html:not([data-theme="dark"])[data-color-theme="black-white"] .message-sent{
             clearTimeout(S.incomingTimer); startCall(true);
         });
 
-        document.getElementById('call-hangup-btn')?.addEventListener('click', endCall);
-        document.getElementById('call-mini-hangup')?.addEventListener('click', e => { e.stopPropagation(); endCall(); });
+        document.getElementById('call-hangup-btn')?.addEventListener('click', endCallByMe);
+        document.getElementById('call-mini-hangup')?.addEventListener('click', endCallByMe);
         document.getElementById('call-minimize-btn')?.addEventListener('click', minimizeWindow);
         document.getElementById('call-mini-pill')?.addEventListener('click', e => {
             if (e.target.closest('.call-mini-hangup')) return;
@@ -881,15 +989,36 @@ html:not([data-theme="dark"])[data-color-theme="black-white"] .message-sent{
         });
 
         document.addEventListener('change', e => {
-            if (e.target.id !== 'call-enabled-toggle') return;
-            S.enabled = e.target.checked;
-            localStorage.setItem(KEY_ENABLED, S.enabled);
-            const btn = document.getElementById('call-toolbar-btn');
-            if (btn) btn.style.display = S.enabled ? '' : 'none';
-            const collapsedCallBtn = document.getElementById('collapsed-call-btn');
-            if (collapsedCallBtn) collapsedCallBtn.style.display = S.enabled ? '' : 'none';
-            if (!S.enabled && S.active) endCall();
-            S.enabled ? scheduleRandomCall() : clearTimeout(S.randomCallTimer);
+            if (e.target.id === 'call-enabled-toggle') {
+                S.enabled = e.target.checked;
+                localStorage.setItem(KEY_ENABLED, S.enabled);
+                const btn = document.getElementById('call-toolbar-btn');
+                if (btn) btn.style.display = S.enabled ? '' : 'none';
+                const collapsedCallBtn = document.getElementById('collapsed-call-btn');
+                if (collapsedCallBtn) collapsedCallBtn.style.display = S.enabled ? '' : 'none';
+                if (!S.enabled && S.active) endCallByMe();
+                S.enabled ? scheduleRandomCall() : clearTimeout(S.randomCallTimer);
+                return;
+            }
+            if (e.target.id === 'call-random-hangup-toggle') {
+                S.randomHangupEnabled = e.target.checked;
+                localStorage.setItem(KEY_RANDOM_HANGUP_ENABLED, S.randomHangupEnabled);
+                if (!S.randomHangupEnabled) clearRandomHangupTimer();
+                else if (S.active && S.startTime) scheduleRandomHangupAfterConnected();
+            }
+        });
+
+        document.addEventListener('input', e => {
+            if (e.target.id !== 'call-random-hangup-slider') return;
+            const val = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+            S.randomHangupChance = val / 100;
+            localStorage.setItem(KEY_RANDOM_HANGUP_CHANCE, String(S.randomHangupChance));
+            const label = document.getElementById('call-random-hangup-value');
+            if (label) label.textContent = val + '%';
+        });
+        document.addEventListener('change', e => {
+            if (e.target.id !== 'call-random-hangup-slider') return;
+            if (S.active && S.startTime && S.randomHangupEnabled) scheduleRandomHangupAfterConnected();
         });
 
         initDrag(); initPillDrag(); initResize();
@@ -911,6 +1040,13 @@ html:not([data-theme="dark"])[data-color-theme="black-white"] .message-sent{
                 if (tog) {
                     tog.checked = S.enabled;
                 }
+                const randomTog = document.getElementById('call-random-hangup-toggle');
+                if (randomTog) randomTog.checked = S.randomHangupEnabled;
+                const randomSlider = document.getElementById('call-random-hangup-slider');
+                const randomValue = document.getElementById('call-random-hangup-value');
+                const percent = Math.round(Math.max(0, Math.min(1, Number(S.randomHangupChance) || 0)) * 100);
+                if (randomSlider) randomSlider.value = String(percent);
+                if (randomValue) randomValue.textContent = percent + '%';
                 const collapsedCallBtn = document.getElementById('collapsed-call-btn');
                 if (collapsedCallBtn) collapsedCallBtn.style.display = S.enabled ? '' : 'none';
             };

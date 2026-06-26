@@ -3606,6 +3606,19 @@
                                 <span class="notif-toggle-slider"></span>
                             </label>
                         </div>
+                        <div class="setting-pill-row" id="call-random-hangup-row">
+                            <span class="setting-pill-icon"><i class="fas fa-phone-slash"></i></span>
+                            <span class="setting-pill-label">通话中随机挂断 <span style="font-size:11px;color:var(--text-secondary);font-weight:400;">接通后按概率由对方主动挂断</span></span>
+                            <label class="notif-toggle-switch" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0;">
+                                <input type="checkbox" id="call-random-hangup-toggle" style="opacity:0;width:0;height:0;">
+                                <span class="notif-toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div class="cs-slider-row" style="padding-top:8px;">
+                            <span class="cs-slider-label">挂断概率</span>
+                            <input type="range" min="0" max="80" step="5" value="18" class="font-size-slider" id="call-random-hangup-slider">
+                            <span class="cs-slider-val" id="call-random-hangup-value">18%</span>
+                        </div>
                     </div>
                 </div>
 
