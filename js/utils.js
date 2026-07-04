@@ -281,6 +281,7 @@ function deduplicateContentArray(arr, baseSystemArray = []) {
         };
 
         const throttledSaveData = () => {
+            try { if (typeof window._mirrorChatSettingsNow === 'function') window._mirrorChatSettingsNow(); } catch(e) {}
             if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
             saveTimeout = setTimeout(() => {
                 try {

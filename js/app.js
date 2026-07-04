@@ -110,7 +110,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 ...m,
                                 timestamp: new Date(m.timestamp)
                             }));
-                            if (backup.settings) Object.assign(settings, backup.settings);
+                            // 不再从紧急备份恢复 settings，避免旧名字/状态覆盖当前会话设置。
                             if (typeof updateUI === 'function') updateUI();
                             if (typeof throttledSaveData === 'function') throttledSaveData();
                             showNotification('已自动恢复本地临时备份内容', 'warning', 3500);
@@ -170,7 +170,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     ...m,
                     timestamp: new Date(m.timestamp)
                 }));
-                if (backup.settings) Object.assign(settings, backup.settings);
+                // 不再从紧急备份恢复 settings，避免旧名字/状态覆盖当前会话设置。
                 if (typeof updateUI === 'function') updateUI();
                 showNotification('初始化异常，已使用本地紧急备份恢复', 'warning', 5000);
             }

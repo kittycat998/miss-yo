@@ -354,46 +354,48 @@ const loadData = async () => {
             }
         };
 
-        // 只针对摸鱼小记做轻量同源会话兜底：不全库深扫，只找已知命名键。
-        // 防止 SESSION_ID/入口切换后，旧记录还在别的会话键里但当前页显示空。
-        const recoverMoyuArrayFromSiblingSessions = async (baseKey, currentValue) => {
-            if (Array.isArray(currentValue) && currentValue.length > 0) return currentValue;
-            const currentFullKey = getStorageKey(baseKey);
-            const suffix = '_' + baseKey;
-            const candidates = [];
-            const pushCandidate = (source, key, value) => {
-                if (key === currentFullKey) return;
-                if (!Array.isArray(value) || value.length === 0) return;
-                candidates.push({ source, key, value, count: value.length });
-            };
+
+        // chatSettings 只认当前会话的当前键。
+        // 允许同名 localStorage 镜像兜底 localforage 偶发读空/失败；不再跨会话、不读 lastGood、不读紧急备份、不按“像默认值”擅自恢复旧设置。
+        const _isObj = (v) => !!(v && typeof v === 'object' && !Array.isArray(v));
+        const _parseMaybeJson = (raw) => {
+            if (raw === null || raw === undefined) return null;
+            if (typeof raw !== 'string') return raw;
+            try { return JSON.parse(raw); } catch (_) { return null; }
+        };
+        const _mirrorChatSettingsLocal = (obj) => {
+            if (!_isObj(obj)) return;
             try {
-                const keys = await localforage.keys();
-                for (const key of keys || []) {
-                    if (!key || !key.startsWith(APP_PREFIX) || !key.endsWith(suffix)) continue;
-                    try { pushCandidate('localforage', key, await localforage.getItem(key)); } catch (_) {}
-                }
+                const fullKey = getStorageKey('chatSettings');
+                localStorage.setItem(fullKey, JSON.stringify(obj));
             } catch (e) {}
-            try {
-                for (let i = 0; i < localStorage.length; i++) {
-                    const key = localStorage.key(i);
-                    if (!key || !key.startsWith(APP_PREFIX) || !key.endsWith(suffix)) continue;
-                    try {
-                        const raw = localStorage.getItem(key);
-                        const value = raw ? JSON.parse(raw) : null;
-                        pushCandidate('localStorage', key, value);
-                    } catch (_) {}
-                }
-            } catch (e) {}
-            candidates.sort((a, b) => b.count - a.count);
-            if (candidates.length) {
-                console.warn(`[loadData] 当前 ${baseKey} 为空，已从同源旧会话恢复 ${candidates[0].count} 条：`, candidates[0].key);
-                try { await localforage.setItem(currentFullKey, candidates[0].value); } catch (_) {}
-                return candidates[0].value;
+        };
+        window._mirrorChatSettingsNow = function() {
+            try { _mirrorChatSettingsLocal(settings); } catch (e) {}
+        };
+        const recoverChatSettingsIfNeeded = async (currentValue) => {
+            const currentFullKey = getStorageKey('chatSettings');
+            if (_isObj(currentValue)) {
+                _mirrorChatSettingsLocal(currentValue);
+                return currentValue;
             }
+            try {
+                const mirrorValue = _parseMaybeJson(localStorage.getItem(currentFullKey));
+                if (_isObj(mirrorValue)) {
+                    console.warn('[loadData] chatSettings 主存储为空，仅使用当前键 localStorage 镜像补回；未跨会话恢复。');
+                    try { await localforage.setItem(currentFullKey, mirrorValue); } catch (_) {}
+                    return mirrorValue;
+                }
+            } catch (e) {}
             return currentValue;
         };
 
-        const savedSettings = getVal(0);
+        // 摸鱼数据也只认当前会话当前键；不再从其它会话自动捞回，避免用户清空后又复活。
+        const recoverMoyuArrayFromSiblingSessions = async (baseKey, currentValue) => currentValue;
+
+
+        let savedSettings = getVal(0);
+        savedSettings = await recoverChatSettingsIfNeeded(savedSettings);
         const savedMessages = getVal(1);
         const savedBgGallery = getVal(2);
         const savedCustomReplies = getVal(3);
@@ -436,6 +438,7 @@ const loadData = async () => {
         if (savedPartnerPersonas) partnerPersonas = savedPartnerPersonas;
 
         if (savedSettings) Object.assign(settings, savedSettings);
+        try { _mirrorChatSettingsLocal(settings); } catch(e) {}
         window.settings = settings;
 
         if (settings.showPartnerNameInChat !== undefined) {
@@ -475,7 +478,7 @@ const loadData = async () => {
                 messages = backup.messages.map(m => ({
                     ...m, timestamp: new Date(m.timestamp)
                 }));
-                if (backup.settings) Object.assign(settings, backup.settings);
+                // 不再从紧急备份恢复 settings，避免旧名字/状态覆盖当前会话设置。
                 if (backup.anniversaries && Array.isArray(backup.anniversaries)) {
                     anniversaries = backup.anniversaries;
                 }
@@ -678,7 +681,7 @@ function _backupCriticalData() {
         const backupPayload = {
             ts: Date.now(),
             messages: messages,
-            settings: settings,
+            // settings 不写入自动紧急备份，避免未来被旧设置自动覆盖。
             sessionId: SESSION_ID,
             anniversaries: anniversaries
         };
@@ -725,11 +728,13 @@ function _tryRecoverFromBackup() {
 async function _safeSetPreserveNonEmpty(baseKey, value) {
     const fullKey = getStorageKey(baseKey);
     const allowEmpty = !!(window.__allowEmptyStorageKeys && window.__allowEmptyStorageKeys[baseKey]);
-    if (Array.isArray(value) && value.length === 0 && !allowEmpty) {
+    // 除 chatMessages 外，保存必须尊重当前内存值：用户删空就是删空，不再用旧数组自动顶回去。
+    // chatMessages 仍保留唯一保护：如果页面异常读成空数组，不让空消息覆盖已有聊天记录；清空聊天入口会直接写入 []，不会被这里阻拦。
+    if (baseKey === 'chatMessages' && Array.isArray(value) && value.length === 0 && !allowEmpty) {
         try {
             const oldValue = await localforage.getItem(fullKey);
             if (Array.isArray(oldValue) && oldValue.length > 0) {
-                console.warn('[saveData] 拦截空数组覆盖非空旧数据:', baseKey, oldValue.length);
+                console.warn('[saveData] 阻止空聊天数组覆盖非空旧聊天记录:', oldValue.length);
                 return oldValue;
             }
         } catch(e) {}
@@ -744,27 +749,18 @@ async function _safeSetPreserveNonEmpty(baseKey, value) {
     }
 }
 
+
 async function _safeSetChatSettingsPreserveVisuals(value) {
     const fullKey = getStorageKey('chatSettings');
-    let next = Object.assign({}, value || {});
+    const defaults = (typeof getDefaultSettings === 'function') ? getDefaultSettings() : {};
+    // 精确保存当前会话设置。补齐缺失字段只用于保持结构完整；已有字段即使是默认值/空值也必须尊重。
+    const next = Object.assign({}, defaults, value || {});
     try {
-        const old = await localforage.getItem(fullKey);
-        if (old && typeof old === 'object') {
-            const preserveWhenEmpty = ['customBubbleCss', 'customGlobalCss', 'customFontUrl'];
-            preserveWhenEmpty.forEach(function(k) {
-                const allowClear = !!(window.__allowEmptySettingsFields && window.__allowEmptySettingsFields[k]);
-                if (!allowClear && (next[k] === '' || next[k] === null || next[k] === undefined) && old[k]) next[k] = old[k];
-            });
-            if ((!next.bubbleStyle || next.bubbleStyle === 'standard') && old.bubbleStyle && old.bubbleStyle !== 'standard' && !window.__bubbleStyleChangedThisSession) {
-                next.bubbleStyle = old.bubbleStyle;
-            }
-            ['messageFontFamily','messageFontWeight','messageLineHeight','fontSize','inChatAvatarEnabled','inChatAvatarSize','inChatAvatarPosition','alwaysShowAvatar','showPartnerNameInChat','myAvatarShape','partnerAvatarShape','myAvatarFrame','partnerAvatarFrame'].forEach(function(k) {
-                if ((next[k] === null || next[k] === undefined || next[k] === '') && old[k] !== null && old[k] !== undefined && old[k] !== '') next[k] = old[k];
-            });
-        }
+        localStorage.setItem(fullKey, JSON.stringify(next));
     } catch(e) {}
     return localforage.setItem(fullKey, next);
 }
+
 
 const saveData = async () => {
     if (!SESSION_ID) {
@@ -3630,16 +3626,7 @@ window.initializeSession = async function() {
         const lastId = await localforage.getItem(`${APP_PREFIX}lastSessionId`).catch(() => null);
         SESSION_ID = lastId && sessionList.some(s => s.id === lastId) ? lastId : sessionList[0].id;
 
-        // 如果当前入口是空会话，而本机还有明确的非空聊天记录，切回消息最多的真实会话。
-        // 这个动作只改 lastSessionId，不动聊天内容本身。
-        try {
-            const currentMsgs = await localforage.getItem(`${APP_PREFIX}${SESSION_ID}_chatMessages`).catch(() => null);
-            const currentCount = Array.isArray(currentMsgs) ? currentMsgs.length : 0;
-            if (currentCount === 0 && candidates.length && candidates[0].count > 0 && candidates[0].id !== SESSION_ID) {
-                console.warn(`[boot] 当前会话为空，切回本地消息最多的会话：${candidates[0].id}（${candidates[0].count}条）`);
-                SESSION_ID = candidates[0].id;
-            }
-        } catch (e) {}
+        // 不再因为当前会话为空就自动切到“消息最多”的旧会话；入口/lastSessionId/hash 才是当前会话真相。
     } else {
         SESSION_ID = await createNewSession(false);
     }
