@@ -710,6 +710,7 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
                 applyCssBtn.addEventListener('click', () => {
                     const css = cssTextarea.value;
                     settings.customBubbleCss = css;
+                    if (css && css.trim()) { try { localStorage.removeItem(getStorageKey('chatSettings_customBubbleCss_clearedAt')); } catch(e) {} }
                     applyCustomBubbleCss(css);
                     throttledSaveData();
                     showNotification('自定义样式已应用', 'success');
@@ -722,6 +723,7 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
                     settings.customBubbleCss = "";
                     window.__allowEmptySettingsFields = window.__allowEmptySettingsFields || {};
                     window.__allowEmptySettingsFields.customBubbleCss = true;
+                    try { localStorage.setItem(getStorageKey('chatSettings_customBubbleCss_clearedAt'), String(Date.now())); } catch(e) {}
                     applyCustomBubbleCss("");
                     if (document.getElementById('css-live-preview-style')) document.getElementById('css-live-preview-style').textContent = '';
                     throttledSaveData();

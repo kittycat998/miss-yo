@@ -220,6 +220,222 @@ autoSendInterval: 5,
         }
 
 
+
+// ===== SAFE16: chatSettings 原子存储层 =====
+// 规则：默认值只能当底板，不能在启动读空/读失败时反写覆盖旧设置。
+// 只有运行期用户动作改过的字段（Proxy 标记 dirty）才允许把旧的非默认值改回默认/空。
+const SETTINGS_STORAGE_VERSION = 16;
+const SETTINGS_LASTGOOD_KEY = () => APP_PREFIX + 'lastGoodChatSettings_' + SESSION_ID;
+const SETTINGS_GLOBAL_LASTGOOD_KEY = () => APP_PREFIX + 'lastGoodChatSettings';
+const SETTINGS_BUBBLE_CLEAR_KEY = () => getStorageKey('chatSettings_customBubbleCss_clearedAt');
+
+function _isPlainObject(v) {
+    return !!(v && typeof v === 'object' && !Array.isArray(v));
+}
+function _parseMaybeJson(raw) {
+    if (raw === null || raw === undefined) return null;
+    if (typeof raw !== 'string') return raw;
+    try { return JSON.parse(raw); } catch (_) { return null; }
+}
+function _settingsDefaults() {
+    try { return getDefaultSettings(); } catch(e) { return {}; }
+}
+function _isEmptySettingValue(v) {
+    return v === undefined || v === null || v === '';
+}
+function _settingEqualsDefault(key, value, defaults) {
+    return value === defaults[key] || (value === undefined && defaults[key] === undefined);
+}
+function _settingsScore(obj) {
+    if (!_isPlainObject(obj)) return 0;
+    const d = _settingsDefaults();
+    let score = 0;
+    const add = (key, weight) => {
+        const v = obj[key];
+        if (!_isEmptySettingValue(v) && !_settingEqualsDefault(key, v, d)) score += weight;
+    };
+    add('partnerName', 12); add('myName', 10); add('partnerStatus', 8); add('myStatus', 8);
+    ['customBubbleCss','customGlobalCss','customFontUrl','customSoundUrl','mySendCustomSoundUrl','partnerMessageCustomSoundUrl','myPokeCustomSoundUrl','partnerPokeCustomSoundUrl'].forEach(k => add(k, 5));
+    ['bubbleStyle','colorTheme','messageFontFamily','fontSize','messageFontWeight','messageLineHeight','inChatAvatarEnabled','inChatAvatarSize','inChatAvatarPosition','inChatAvatarCustomOffset','alwaysShowAvatar','showPartnerNameInChat','myAvatarShape','partnerAvatarShape','bottomCollapseMode','enterKeySendEnabled','pinyinCardEnabled','autoSendEnabled','moyuAutoGenerateEnabled','envelopeAutoSendEnabled','envelopeCustomRuleEnabled','partnerVoiceChance','partnerVideoChance','callRandomHangupEnabled','callRandomHangupChance','allowReadNoReply','readNoReplyChance','replyDelayMin','replyDelayMax','timeFormat'].forEach(k => add(k, 2));
+    if (obj.myAvatarFrame) score += 3;
+    if (obj.partnerAvatarFrame) score += 3;
+    if (obj.partnerAvatar || obj.myAvatar) score += 2;
+    return score;
+}
+function _settingsWasExplicitlyCleared(key) {
+    try {
+        if (key === 'customBubbleCss') return !!parseInt(localStorage.getItem(SETTINGS_BUBBLE_CLEAR_KEY()) || '0', 10);
+    } catch(e) {}
+    return false;
+}
+function _applySettingsTombstones(obj) {
+    if (!_isPlainObject(obj)) return obj;
+    const out = Object.assign({}, obj);
+    if (_settingsWasExplicitlyCleared('customBubbleCss')) out.customBubbleCss = '';
+    return out;
+}
+function _settingsDirtyMap() {
+    if (!window.__settingsDirtyKeys) window.__settingsDirtyKeys = Object.create(null);
+    return window.__settingsDirtyKeys;
+}
+function _markSettingsDirty(key) {
+    if (!key) return;
+    _settingsDirtyMap()[String(key)] = Date.now();
+}
+function _isSettingsKeyDirty(key) {
+    return !!(_settingsDirtyMap() && _settingsDirtyMap()[String(key)]);
+}
+function _hasAnySettingsDirty() {
+    return Object.keys(_settingsDirtyMap()).length > 0;
+}
+function _resetSettingsDirty() {
+    window.__settingsDirtyKeys = Object.create(null);
+}
+function _proxifySettingsObject(obj) {
+    if (!_isPlainObject(obj)) obj = {};
+    if (obj.__isSettingsProxy) return obj;
+    const proxy = new Proxy(obj, {
+        set(target, prop, value) {
+            if (String(prop) === '__isSettingsProxy') { target[prop] = value; return true; }
+            const old = target[prop];
+            target[prop] = value;
+            if (window.__appDataReady === true && window.__settingsHydrating !== true && old !== value) {
+                _markSettingsDirty(prop);
+                try { window.__settingsTouchedAt = Date.now(); } catch(e) {}
+            }
+            return true;
+        },
+        deleteProperty(target, prop) {
+            if (prop in target) {
+                delete target[prop];
+                if (window.__appDataReady === true && window.__settingsHydrating !== true) _markSettingsDirty(prop);
+            }
+            return true;
+        }
+    });
+    try { Object.defineProperty(proxy, '__isSettingsProxy', { value: true, enumerable: false }); } catch(e) {}
+    return proxy;
+}
+function _readLocalStorageSetting(key) {
+    try { return _parseMaybeJson(localStorage.getItem(key)); } catch(e) { return null; }
+}
+async function _readSettingsCandidates(currentValue) {
+    const list = [];
+    const fullKey = getStorageKey('chatSettings');
+    const push = (source, key, value, lastResort) => {
+        value = _parseMaybeJson(value);
+        if (!_isPlainObject(value)) return;
+        value = _applySettingsTombstones(value);
+        list.push({ source, key, value, score: _settingsScore(value), lastResort: !!lastResort });
+    };
+    push('memory-current', 'settings', currentValue, false);
+    try { push('localforage-current', fullKey, await localforage.getItem(fullKey), false); } catch(e) {}
+    push('localStorage-current', fullKey, _readLocalStorageSetting(fullKey), false);
+    push('localStorage-lastGood-session', SETTINGS_LASTGOOD_KEY(), _readLocalStorageSetting(SETTINGS_LASTGOOD_KEY()), false);
+    try {
+        const backup = _parseMaybeJson(localStorage.getItem(_BACKUP_PREFIX + 'critical'));
+        if (backup && backup.sessionId === SESSION_ID && backup.settings) push('emergency-current-session', _BACKUP_PREFIX + 'critical.settings', backup.settings, false);
+    } catch(e) {}
+    // 全局 lastGood 只最后兜底；它不参与正常覆盖，避免别的会话乱盖当前会话。
+    push('localStorage-lastGood-global-last-resort', SETTINGS_GLOBAL_LASTGOOD_KEY(), _readLocalStorageSetting(SETTINGS_GLOBAL_LASTGOOD_KEY()), true);
+    list.sort((a,b) => (b.score - a.score) || ((a.lastResort === b.lastResort) ? 0 : (a.lastResort ? 1 : -1)));
+    return list;
+}
+function _mirrorSettingsLocal(obj, opts) {
+    opts = opts || {};
+    if (!_isPlainObject(obj)) return;
+    const normalized = _applySettingsTombstones(Object.assign({}, obj));
+    const score = _settingsScore(normalized);
+    const fullKey = getStorageKey('chatSettings');
+    // 关键：默认/空 settings 绝不写镜像，除非是用户动作后明确保存。
+    if (score <= 0 && !opts.forceDefault && !_hasAnySettingsDirty()) return;
+    try {
+        const json = JSON.stringify(normalized);
+        localStorage.setItem(fullKey, json);
+        if (score > 0) {
+            localStorage.setItem(SETTINGS_LASTGOOD_KEY(), json);
+            localStorage.setItem(SETTINGS_GLOBAL_LASTGOOD_KEY(), json);
+        }
+    } catch(e) {}
+}
+window._mirrorChatSettingsNow = function(forceDefault) {
+    try { _mirrorSettingsLocal(settings, { forceDefault: !!forceDefault }); } catch(e) {}
+};
+async function _resolveChatSettingsForLoad(currentValue) {
+    currentValue = _parseMaybeJson(currentValue);
+    const currentScore = _settingsScore(currentValue);
+    if (currentScore > 0) {
+        const normalized = _applySettingsTombstones(currentValue);
+        _mirrorSettingsLocal(normalized);
+        return normalized;
+    }
+    const candidates = await _readSettingsCandidates(currentValue);
+    const bestSameSession = candidates.find(c => !c.lastResort && c.score > 0);
+    // 不再自动使用全局 lastGood：它没有 sessionId，容易把别的会话设置反盖回来。
+    // 真正可靠的自动恢复只认当前会话 localforage / localStorage 镜像 / session lastGood / 当前会话紧急备份。
+    const best = bestSameSession;
+    if (best) {
+        console.warn('[settings-store] 当前 chatSettings 为空/默认，已恢复：', best.source, best.key, best.score);
+        _mirrorSettingsLocal(best.value);
+        try { await localforage.setItem(getStorageKey('chatSettings'), best.value); } catch(e) {}
+        return best.value;
+    }
+    return currentValue;
+}
+async function _mergeSettingsForSave(currentValue) {
+    const defaults = _settingsDefaults();
+    let current = _applySettingsTombstones(Object.assign({}, defaults, currentValue || {}));
+    const currentScore = _settingsScore(current);
+    const candidates = await _readSettingsCandidates(current);
+    // 保存时只能拿“真实持久层旧值”做合并基准，不能把 memory-current 当 persisted；
+    // 否则当前内存已经丢了某个字段但总分更高时，会自己跟自己合并，把旧字段彻底冲掉。
+    // 全局 lastGood 也不参与自动保存合并，避免别的会话反盖当前会话。
+    const persisted = candidates.find(c => c.source !== 'memory-current' && !c.lastResort && c.score > 0) || null;
+
+    // load 没成功、或者没有用户动作时，绝不让默认值覆盖旧设置。
+    if ((window.__appDataReady !== true || window.__settingsLoadFailed === true) && persisted && persisted.score > currentScore && !_hasAnySettingsDirty()) {
+        return _applySettingsTombstones(Object.assign({}, defaults, persisted.value));
+    }
+
+    if (persisted && persisted.score > 0) {
+        const old = _applySettingsTombstones(persisted.value);
+        Object.keys(old).forEach(key => {
+            if (_isSettingsKeyDirty(key)) return;
+            if (_settingsWasExplicitlyCleared(key)) { current[key] = ''; return; }
+            const curVal = current[key];
+            const oldVal = old[key];
+            const curIsWeak = _isEmptySettingValue(curVal) || _settingEqualsDefault(key, curVal, defaults);
+            const oldIsStrong = !_isEmptySettingValue(oldVal) && !_settingEqualsDefault(key, oldVal, defaults);
+            if (curIsWeak && oldIsStrong) current[key] = oldVal;
+        });
+    }
+    return current;
+}
+async function _commitChatSettings(value) {
+    const hadDirty = _hasAnySettingsDirty();
+    const next = await _mergeSettingsForSave(value);
+    _mirrorSettingsLocal(next, { forceDefault: hadDirty });
+    try { await localforage.setItem(getStorageKey('chatSettings'), next); } catch(e) { throw e; }
+    // dirty 只表示“本轮待提交的用户改动”。提交成功后必须清掉，
+    // 否则几分钟后一次定时保存也会被误判成用户动作，默认值又能覆盖旧设置。
+    _resetSettingsDirty();
+    return next;
+}
+function _debugSettingsStore() {
+    try {
+        console.table({
+            session: SESSION_ID,
+            ready: window.__appDataReady,
+            hydrating: window.__settingsHydrating,
+            loadFailed: window.__settingsLoadFailed,
+            score: _settingsScore(settings),
+            dirtyKeys: Object.keys(_settingsDirtyMap()).join(',')
+        });
+    } catch(e) {}
+}
+window.debugSettingsStore = _debugSettingsStore;
+
+
         function renderBackgroundGallery() {
             const list = document.getElementById('background-gallery-list');
             if (!list) return;
@@ -310,6 +526,10 @@ autoSendInterval: 5,
 
 const loadData = async () => {
     try {
+        window.__settingsHydrating = true;
+        window.__appDataReady = false;
+        window.__settingsLoadFailed = false;
+        _resetSettingsDirty();
         settings = getDefaultSettings();
 
         
@@ -355,47 +575,14 @@ const loadData = async () => {
         };
 
 
-        // chatSettings 只认当前会话的当前键。
-        // 允许同名 localStorage 镜像兜底 localforage 偶发读空/失败；不再跨会话、不读 lastGood、不读紧急备份、不按“像默认值”擅自恢复旧设置。
-        const _isObj = (v) => !!(v && typeof v === 'object' && !Array.isArray(v));
-        const _parseMaybeJson = (raw) => {
-            if (raw === null || raw === undefined) return null;
-            if (typeof raw !== 'string') return raw;
-            try { return JSON.parse(raw); } catch (_) { return null; }
-        };
-        const _mirrorChatSettingsLocal = (obj) => {
-            if (!_isObj(obj)) return;
-            try {
-                const fullKey = getStorageKey('chatSettings');
-                localStorage.setItem(fullKey, JSON.stringify(obj));
-            } catch (e) {}
-        };
-        window._mirrorChatSettingsNow = function() {
-            try { _mirrorChatSettingsLocal(settings); } catch (e) {}
-        };
-        const recoverChatSettingsIfNeeded = async (currentValue) => {
-            const currentFullKey = getStorageKey('chatSettings');
-            if (_isObj(currentValue)) {
-                _mirrorChatSettingsLocal(currentValue);
-                return currentValue;
-            }
-            try {
-                const mirrorValue = _parseMaybeJson(localStorage.getItem(currentFullKey));
-                if (_isObj(mirrorValue)) {
-                    console.warn('[loadData] chatSettings 主存储为空，仅使用当前键 localStorage 镜像补回；未跨会话恢复。');
-                    try { await localforage.setItem(currentFullKey, mirrorValue); } catch (_) {}
-                    return mirrorValue;
-                }
-            } catch (e) {}
-            return currentValue;
-        };
-
-        // 摸鱼数据也只认当前会话当前键；不再从其它会话自动捞回，避免用户清空后又复活。
+        // SAFE16：chatSettings 统一走原子存储层，不再在 loadData 内部临时定义一套评分/兜底逻辑。
+        // 具体规则见上方“SAFE16: chatSettings 原子存储层”。
         const recoverMoyuArrayFromSiblingSessions = async (baseKey, currentValue) => currentValue;
 
 
+
         let savedSettings = getVal(0);
-        savedSettings = await recoverChatSettingsIfNeeded(savedSettings);
+        savedSettings = await _resolveChatSettingsForLoad(savedSettings);
         const savedMessages = getVal(1);
         const savedBgGallery = getVal(2);
         const savedCustomReplies = getVal(3);
@@ -438,8 +625,9 @@ const loadData = async () => {
         if (savedPartnerPersonas) partnerPersonas = savedPartnerPersonas;
 
         if (savedSettings) Object.assign(settings, savedSettings);
-        try { _mirrorChatSettingsLocal(settings); } catch(e) {}
+        settings = _proxifySettingsObject(settings);
         window.settings = settings;
+        try { _mirrorSettingsLocal(settings); } catch(e) {}
 
         if (settings.showPartnerNameInChat !== undefined) {
             showPartnerNameInChat = settings.showPartnerNameInChat;
@@ -567,6 +755,9 @@ const loadData = async () => {
         try { await loadEnvelopeData(); } catch(e) { console.warn("信封数据加载失败", e); }
         
         displayedMessageCount = HISTORY_BATCH_SIZE;
+        window.__settingsHydrating = false;
+        window.__appDataReady = true;
+        _resetSettingsDirty();
         
         setTimeout(() => {
             if (typeof applyAllAvatarFrames === 'function') applyAllAvatarFrames();
@@ -584,7 +775,11 @@ const loadData = async () => {
 
     } catch (e) {
         console.error("LoadData 内部致命错误:", e);
-        settings = getDefaultSettings();
+        window.__settingsLoadFailed = true;
+        window.__settingsHydrating = false;
+        window.__appDataReady = false;
+        settings = _proxifySettingsObject(getDefaultSettings());
+        window.settings = settings;
         messages = [];
         updateUI();
     }
@@ -667,21 +862,31 @@ const _BACKUP_PREFIX = 'BACKUP_V1_';
 function _backupCriticalData() {
     if (window._skipBackup) return;
     try {
+        let oldBackup = null;
+        try {
+            const oldRaw = localStorage.getItem(_BACKUP_PREFIX + 'critical');
+            oldBackup = oldRaw ? JSON.parse(oldRaw) : null;
+        } catch(_e) {}
         // 保护旧备份：当前页面若已异常变成空消息，不要用空数组覆盖仍有内容的紧急备份。
         if (!Array.isArray(messages) || messages.length === 0) {
-            try {
-                const oldRaw = localStorage.getItem(_BACKUP_PREFIX + 'critical');
-                const oldBackup = oldRaw ? JSON.parse(oldRaw) : null;
-                if (oldBackup && Array.isArray(oldBackup.messages) && oldBackup.messages.length > 0) {
-                    console.warn('[backup] 当前消息为空，保留已有紧急备份，避免二次覆盖');
-                    return;
-                }
-            } catch(_e) {}
+            if (oldBackup && Array.isArray(oldBackup.messages) && oldBackup.messages.length > 0) {
+                console.warn('[backup] 当前消息为空，保留已有紧急备份，避免二次覆盖');
+                return;
+            }
         }
+        let backupSettings = settings;
+        try {
+            const oldScore = oldBackup && oldBackup.sessionId === SESSION_ID ? _settingsScore(oldBackup.settings) : 0;
+            const curScore = _settingsScore(settings);
+            // 关键：页面还没完成加载/加载失败/没有用户改动时，不让默认 settings 覆盖旧备份 settings。
+            if ((window.__appDataReady !== true || window.__settingsLoadFailed === true || !_hasAnySettingsDirty()) && oldScore > curScore) {
+                backupSettings = oldBackup.settings;
+            }
+        } catch(e) {}
         const backupPayload = {
             ts: Date.now(),
             messages: messages,
-            // settings 不写入自动紧急备份，避免未来被旧设置自动覆盖。
+            settings: backupSettings,
             sessionId: SESSION_ID,
             anniversaries: anniversaries
         };
@@ -751,14 +956,9 @@ async function _safeSetPreserveNonEmpty(baseKey, value) {
 
 
 async function _safeSetChatSettingsPreserveVisuals(value) {
-    const fullKey = getStorageKey('chatSettings');
-    const defaults = (typeof getDefaultSettings === 'function') ? getDefaultSettings() : {};
-    // 精确保存当前会话设置。补齐缺失字段只用于保持结构完整；已有字段即使是默认值/空值也必须尊重。
-    const next = Object.assign({}, defaults, value || {});
-    try {
-        localStorage.setItem(fullKey, JSON.stringify(next));
-    } catch(e) {}
-    return localforage.setItem(fullKey, next);
+    // SAFE16：chatSettings 只通过原子提交。
+    // 保存前先合并旧持久值，未被用户动作改过的默认字段不准覆盖旧非默认字段。
+    return _commitChatSettings(value);
 }
 
 

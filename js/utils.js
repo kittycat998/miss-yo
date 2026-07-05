@@ -281,7 +281,8 @@ function deduplicateContentArray(arr, baseSystemArray = []) {
         };
 
         const throttledSaveData = () => {
-            try { if (typeof window._mirrorChatSettingsNow === 'function') window._mirrorChatSettingsNow(); } catch(e) {}
+            // 不在真正 saveData/merge 前提前镜像 chatSettings。
+            // 提前镜像会先污染 localStorage-lastGood，正好打穿“读空时防默认覆盖”的保护。
             if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
             saveTimeout = setTimeout(() => {
                 try {
