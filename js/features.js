@@ -540,6 +540,10 @@ function showPokeTab() {
             e.stopPropagation();
             if (confirm('确定删除此拍一拍？')) {
                 myPokes.splice(idx, 1);
+                if (Array.isArray(myPokes) && myPokes.length === 0) {
+                    if (typeof _allowEmptyContentKeyIfNeeded === 'function') _allowEmptyContentKeyIfNeeded('myPokes', myPokes);
+                    else { window.__allowEmptyStorageKeys = window.__allowEmptyStorageKeys || {}; window.__allowEmptyStorageKeys.myPokes = true; }
+                }
                 if (typeof throttledSaveData === 'function') throttledSaveData();
                 showPokeTab(); // 刷新列表
             }

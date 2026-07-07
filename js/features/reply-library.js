@@ -65,7 +65,11 @@ function _allowEmptyContentKeyIfNeeded(baseKey, arr) {
 function _allowEmptyGroupCtxIfNeeded(ctx) {
     if (!ctx || !Array.isArray(ctx.groups) || ctx.groups.length !== 0) return;
     if (ctx.groups === window.customReplyGroups) _allowEmptyContentKeyIfNeeded('customReplyGroups', ctx.groups);
+    else if (ctx.groups === window.customPokeGroups) _allowEmptyContentKeyIfNeeded('customPokeGroups', ctx.groups);
+    else if (ctx.groups === window.customStatusGroups) _allowEmptyContentKeyIfNeeded('customStatusGroups', ctx.groups);
     else if (ctx.groups === window.kaomojiGroups) _allowEmptyContentKeyIfNeeded('kaomojiGroups', ctx.groups);
+    else if (ctx.groups === window.customStickerGroups) _allowEmptyContentKeyIfNeeded('customStickerGroups', ctx.groups);
+    else if (ctx.groups === window.customVoiceGroups) _allowEmptyContentKeyIfNeeded('customVoiceGroups', ctx.groups);
     else if (ctx.groups === window.moyuActivityGroups) _allowEmptyContentKeyIfNeeded('moyuActivityGroups', ctx.groups);
     else if (ctx.groups === window.moyuLocationGroups) _allowEmptyContentKeyIfNeeded('moyuLocationGroups', ctx.groups);
 }
@@ -622,6 +626,7 @@ function _renderModernToolbar() {
             if (isStickersTab) {
                 const deleted = indices.map(i => stickerLibrary[i]).filter(Boolean);
                 indices.forEach(i => stickerLibrary.splice(i, 1));
+                _allowEmptyContentKeyIfNeeded('stickerLibrary', stickerLibrary);
                 // 同步清理已删除条目的"屏蔽集合"
                 const dis = _getDisabledStickerItemsSet();
                 deleted.forEach(d => dis.delete(d));
@@ -687,24 +692,28 @@ function _renderModernToolbar() {
                 showNotification(`已删除 ${indices.length} 个 Emoji`, 'success');
             } else if (isIntrosTab) {
                 indices.forEach(i => customIntros.splice(i, 1));
+                _allowEmptyContentKeyIfNeeded('customIntros', customIntros);
                 _batchSelectedIndices.clear();
                 throttledSaveData();
                 renderReplyLibrary();
                 showNotification(`已删除 ${indices.length} 条开场动画`, 'success');
             } else if (isMottosTab) {
                 indices.forEach(i => customMottos.splice(i, 1));
+                _allowEmptyContentKeyIfNeeded('customMottos', customMottos);
                 _batchSelectedIndices.clear();
                 throttledSaveData();
                 renderReplyLibrary();
                 showNotification(`已删除 ${indices.length} 条格言`, 'success');
             } else if (isPokesTab) {
                 indices.forEach(i => customPokes.splice(i, 1));
+                _allowEmptyContentKeyIfNeeded('customPokes', customPokes);
                 _batchSelectedIndices.clear();
                 throttledSaveData();
                 renderReplyLibrary();
                 showNotification(`已删除 ${indices.length} 条拍一拍`, 'success');
             } else if (isStatusesTab) {
                 indices.forEach(i => customStatuses.splice(i, 1));
+                _allowEmptyContentKeyIfNeeded('customStatuses', customStatuses);
                 _batchSelectedIndices.clear();
                 throttledSaveData();
                 renderReplyLibrary();
@@ -1241,6 +1250,7 @@ function _renderStickerGrid(container, itemsWithIdx, disabledSet) {
                     ctx.groups.forEach(g => { if (g.items) g.items = g.items.filter(t => t !== text); });
                 }
                 stickerLibrary.splice(idx, 1);
+                _allowEmptyContentKeyIfNeeded('stickerLibrary', stickerLibrary);
                 _batchSelectedIndices.clear();
                 _syncStickerLibrary();
                 throttledSaveData();
@@ -1546,6 +1556,7 @@ function _showStickerContextMenu(itemText, itemIdx, anchorEl) {
             if (isDisabled) { disabledSet.delete(itemText); _saveDisabledStickerItemsSet(disabledSet); }
             if (ctx.groups) ctx.groups.forEach(g => { if (g.items) g.items = g.items.filter(t => t !== itemText); });
             stickerLibrary.splice(itemIdx, 1);
+            _allowEmptyContentKeyIfNeeded('stickerLibrary', stickerLibrary);
             _batchSelectedIndices.clear();
             _syncStickerLibrary();
             throttledSaveData();
@@ -2021,10 +2032,22 @@ function deleteItem(index) {
         kaomojiLibrary.splice(index, 1);
         _allowEmptyContentKeyIfNeeded('kaomojiLibrary', kaomojiLibrary);
     }
-    else if (currentSubTab === 'pokes') customPokes.splice(index, 1);
-    else if (currentSubTab === 'statuses') customStatuses.splice(index, 1);
-    else if (currentSubTab === 'mottos') customMottos.splice(index, 1);
-    else if (currentSubTab === 'intros') customIntros.splice(index, 1);
+    else if (currentSubTab === 'pokes') {
+        customPokes.splice(index, 1);
+        _allowEmptyContentKeyIfNeeded('customPokes', customPokes);
+    }
+    else if (currentSubTab === 'statuses') {
+        customStatuses.splice(index, 1);
+        _allowEmptyContentKeyIfNeeded('customStatuses', customStatuses);
+    }
+    else if (currentSubTab === 'mottos') {
+        customMottos.splice(index, 1);
+        _allowEmptyContentKeyIfNeeded('customMottos', customMottos);
+    }
+    else if (currentSubTab === 'intros') {
+        customIntros.splice(index, 1);
+        _allowEmptyContentKeyIfNeeded('customIntros', customIntros);
+    }
     else if (currentMajorTab === 'moyu' && currentSubTab === 'moyu') {
         const activities = window.moyuActivities || [];
         activities.splice(index, 1);

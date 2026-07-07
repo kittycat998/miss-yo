@@ -524,6 +524,149 @@ window.debugSettingsStore = _debugSettingsStore;
         };
 
 
+// ===== SAFE25: 全内容快照 + 用户确认恢复闸门 =====
+// 规则：快照只保存“健康的非空内容”，检测到当前内容被写空时只提示，不自动覆盖。
+const CONTENT_GUARD_KEYS = [
+    'customReplies', 'customReplyGroups',
+    'customPokes', 'customStatuses', 'customMottos', 'customIntros', 'customPokeGroups', 'customStatusGroups', 'myPokes',
+    'customEmojis', 'kaomojiLibrary', 'kaomojiGroups',
+    'stickerLibrary', 'myStickerLibrary', 'customStickerGroups',
+    'customVoices', 'customVoiceGroups',
+    'moyuRecords', 'moyuActivities', 'moyuLocations', 'moyuActivityGroups', 'moyuLocationGroups',
+    'anniversaries'
+];
+const CONTENT_GUARD_LABELS = {
+    customReplies: '普通字卡', customReplyGroups: '字卡分组',
+    customPokes: '拍一拍', customStatuses: '对方状态', customMottos: '顶部格言', customIntros: '开场动画',
+    customPokeGroups: '拍一拍分组', customStatusGroups: '状态分组', myPokes: '快捷拍一拍',
+    customEmojis: 'Emoji', kaomojiLibrary: '颜文字', kaomojiGroups: '颜文字分组',
+    stickerLibrary: '表情库', myStickerLibrary: '我的表情', customStickerGroups: '表情分组',
+    customVoices: '语音库', customVoiceGroups: '语音分组',
+    moyuRecords: '摸鱼记录', moyuActivities: '摸鱼活动', moyuLocations: '工作地点',
+    moyuActivityGroups: '摸鱼活动分组', moyuLocationGroups: '工作地点分组',
+    anniversaries: '纪念日'
+};
+const GLOBAL_CONTENT_SNAPSHOT_KEY = () => APP_PREFIX + 'globalContentSnapshotV1';
+const GLOBAL_CONTENT_SNAPSHOT_HISTORY_KEY = () => APP_PREFIX + 'globalContentSnapshotHistoryV1';
+// SAFE26：带大媒体体积的内容只保留最新全局快照，不进历史，避免保护逻辑把 IndexedDB 撑爆。
+// SAFE27：普通内容历史快照从 8 份收紧到 3 份；最新全局快照仍始终只保留一份，并按具体内容 key 更新。
+const CONTENT_SNAPSHOT_HEAVY_KEYS = ['stickerLibrary', 'myStickerLibrary', 'customVoices'];
+const CONTENT_SNAPSHOT_HISTORY_LIMIT = 3;
+const CONTENT_SNAPSHOT_HISTORY_MAX_CHARS = 1200000;
+// SAFE28：saveData 会并发保存多项内容；全局快照必须串行读改写，避免多个 key 同时写入时互相覆盖。
+let _contentSnapshotWriteQueue = Promise.resolve();
+
+function _contentGuardLabel(baseKey) {
+    return CONTENT_GUARD_LABELS[baseKey] || baseKey;
+}
+function _contentArraySignature(value) {
+    let str = '';
+    try { str = JSON.stringify(value || []); } catch(e) { str = String((value || []).length || 0); }
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+    return `${Array.isArray(value) ? value.length : 0}:${str.length}:${h}`;
+}
+function _contentArrayApproxChars(value) {
+    try { return JSON.stringify(value || []).length; } catch(e) { return 0; }
+}
+function _cloneContentArrayForSnapshot(value) {
+    if (!Array.isArray(value)) return value;
+    try {
+        if (typeof structuredClone === 'function') return structuredClone(value);
+    } catch(e) {}
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch(e) {
+        return value.slice();
+    }
+}
+async function _readGlobalContentSnapshot() {
+    try {
+        const snap = await localforage.getItem(GLOBAL_CONTENT_SNAPSHOT_KEY());
+        return (snap && typeof snap === 'object') ? snap : { version: 1, data: {}, counts: {}, clearedAt: {} };
+    } catch(e) {
+        return { version: 1, data: {}, counts: {}, clearedAt: {} };
+    }
+}
+async function _readGlobalContentSnapshotHistory() {
+    try {
+        const history = await localforage.getItem(GLOBAL_CONTENT_SNAPSHOT_HISTORY_KEY());
+        return (history && typeof history === 'object') ? history : { version: 1, entries: {} };
+    } catch(e) {
+        return { version: 1, entries: {} };
+    }
+}
+async function _updateGlobalContentSnapshot(baseKey, value, allowEmpty) {
+    if (!CONTENT_GUARD_KEYS.includes(baseKey) || !Array.isArray(value)) return;
+    // SAFE29：入队时冻结一份内容副本，避免排队等待期间数组被 UI 后续操作改写，导致快照保存成另一刻的状态。
+    const queuedValue = _cloneContentArrayForSnapshot(value);
+    const queuedAllowEmpty = !!allowEmpty;
+    const run = async () => {
+        try {
+            const value = queuedValue;
+            const allowEmpty = queuedAllowEmpty;
+            const snap = await _readGlobalContentSnapshot();
+            snap.version = 1;
+            snap.data = snap.data || {};
+            snap.counts = snap.counts || {};
+            snap.clearedAt = snap.clearedAt || {};
+            snap.updatedAt = Date.now();
+            snap.sessionId = SESSION_ID || snap.sessionId || null;
+            if (value.length > 0) {
+                snap.data[baseKey] = value;
+                snap.counts[baseKey] = value.length;
+                delete snap.clearedAt[baseKey];
+                await localforage.setItem(GLOBAL_CONTENT_SNAPSHOT_KEY(), snap);
+
+                const history = await _readGlobalContentSnapshotHistory();
+                history.version = 1;
+                history.entries = history.entries || {};
+                const signature = _contentArraySignature(value);
+                const approxChars = _contentArrayApproxChars(value);
+                const shouldKeepHistory = !CONTENT_SNAPSHOT_HEAVY_KEYS.includes(baseKey) && approxChars <= CONTENT_SNAPSHOT_HISTORY_MAX_CHARS;
+                if (shouldKeepHistory) {
+                    const list = Array.isArray(history.entries[baseKey]) ? history.entries[baseKey] : [];
+                    if (!list.length || list[0].signature !== signature) {
+                        list.unshift({ savedAt: Date.now(), sessionId: SESSION_ID || null, count: value.length, signature, value });
+                        history.entries[baseKey] = list.slice(0, CONTENT_SNAPSHOT_HISTORY_LIMIT);
+                        await localforage.setItem(GLOBAL_CONTENT_SNAPSHOT_HISTORY_KEY(), history);
+                    }
+                } else if (history.entries[baseKey]) {
+                    delete history.entries[baseKey];
+                    await localforage.setItem(GLOBAL_CONTENT_SNAPSHOT_HISTORY_KEY(), history);
+                    console.warn('[contentSnapshot] 已跳过大体积内容历史快照，只保留最新快照:', baseKey, approxChars);
+                }
+            } else if (allowEmpty) {
+                delete snap.data[baseKey];
+                snap.counts[baseKey] = 0;
+                snap.clearedAt[baseKey] = Date.now();
+                await localforage.setItem(GLOBAL_CONTENT_SNAPSHOT_KEY(), snap);
+            }
+        } catch(e) {
+            console.warn('[contentSnapshot] 更新全局内容快照失败:', baseKey, e);
+        }
+    };
+    _contentSnapshotWriteQueue = _contentSnapshotWriteQueue.then(run, run);
+    return _contentSnapshotWriteQueue;
+}
+async function _collectGlobalContentSnapshotCandidates(baseKey, candidates) {
+    const pushCandidate = (source, key, value) => {
+        if (Array.isArray(value) && value.length > 0) {
+            candidates.push({ key, source, value, count: value.length });
+        }
+    };
+    try {
+        const snap = await _readGlobalContentSnapshot();
+        if (snap && snap.data) pushCandidate('globalSnapshot', GLOBAL_CONTENT_SNAPSHOT_KEY(), snap.data[baseKey]);
+    } catch(e) {}
+    try {
+        const history = await _readGlobalContentSnapshotHistory();
+        const list = history && history.entries && Array.isArray(history.entries[baseKey]) ? history.entries[baseKey] : [];
+        list.forEach((item, idx) => pushCandidate('globalSnapshotHistory', `${GLOBAL_CONTENT_SNAPSHOT_HISTORY_KEY()}#${idx}`, item && item.value));
+    } catch(e) {}
+}
+
+
 const loadData = async () => {
     try {
         window.__settingsHydrating = true;
@@ -574,20 +717,65 @@ const loadData = async () => {
             }
         };
 
-        // SAFE21：内容库缺失/空数组恢复。
-        // 当前 key 缺失，或被坏版本写成 [] 时，从同源旧 key/旧全局 key 捞非空数组。
+        // SAFE25：内容库缺失/空数组只登记候选，弹窗确认后才恢复。
+        // 当前 key 缺失，或被坏版本写成 [] 时，从同源旧 key/旧全局 key/全局快照里找候选。
         // 只有明确从新版 UI 删除到空并写入 cleared 标记时，才认为这是用户主动清空。
-        const CONTENT_RECOVERY_KEYS = [
-            'customReplies', 'customReplyGroups',
-            'kaomojiLibrary', 'customEmojis', 'moyuRecords', 'moyuActivities', 'moyuLocations',
-            'kaomojiGroups', 'moyuActivityGroups', 'moyuLocationGroups'
-        ];
+        const CONTENT_RECOVERY_KEYS = CONTENT_GUARD_KEYS;
         const contentClearedMarkerKey = (baseKey) => getStorageKey(baseKey + '_contentClearedAt');
         const isContentClearedByUser = (baseKey) => {
             try { return !!localStorage.getItem(contentClearedMarkerKey(baseKey)); } catch(e) { return false; }
         };
         const clearContentClearedMarker = (baseKey) => {
             try { localStorage.removeItem(contentClearedMarkerKey(baseKey)); } catch(e) {}
+        };
+        const pendingContentRecoveries = {};
+        const skippedContentRecoveries = {};
+        let approvedContentRecoveries = {};
+
+        const registerPendingContentRecovery = (baseKey, currentState, best) => {
+            if (!best || !Array.isArray(best.value) || best.value.length === 0) return;
+            pendingContentRecoveries[baseKey] = { baseKey, currentState, best };
+        };
+
+        const resolvePendingContentRecoveries = async () => {
+            const entries = Object.values(pendingContentRecoveries);
+            if (!entries.length) return {};
+            const lines = entries.slice(0, 18).map(item => {
+                const stateText = item.currentState === 'missing' ? '当前缺失' : '当前为空';
+                return `• ${_contentGuardLabel(item.baseKey)}：${stateText}，可恢复 ${item.best.count} 条（${item.best.source}）`;
+            });
+            const more = entries.length > 18 ? `\n……还有 ${entries.length - 18} 项` : '';
+            const message = `检测到一些内容库可能被异常写空。\n\n${lines.join('\n')}${more}\n\n点“确定”才恢复这些内容；点“取消”就保持当前状态，不会自动写回。`;
+            const ok = (typeof window !== 'undefined' && typeof window.confirm === 'function') ? window.confirm(message) : false;
+            if (!ok) {
+                entries.forEach(item => { skippedContentRecoveries[item.baseKey] = true; });
+                if (typeof showNotification === 'function') showNotification(`已跳过 ${entries.length} 项内容恢复，快照仍保留`, 'info', 5000);
+                console.warn('[SAFE25] 用户跳过内容恢复:', entries.map(e => e.baseKey));
+                return {};
+            }
+            const approved = {};
+            for (const item of entries) {
+                const baseKey = item.baseKey;
+                const value = item.best.value;
+                try { await localforage.setItem(getStorageKey(baseKey), value); } catch(e) {}
+                try { await localforage.setItem(getStorageKey(baseKey + '_lastGood'), value); } catch(e) {}
+                if (!['stickerLibrary', 'myStickerLibrary', 'customVoices'].includes(baseKey)) {
+                    try { localStorage.setItem(getStorageKey(baseKey), JSON.stringify(value)); } catch(e) {}
+                }
+                clearContentClearedMarker(baseKey);
+                try { await _updateGlobalContentSnapshot(baseKey, value, false); } catch(e) {}
+                approved[baseKey] = value;
+            }
+            if (typeof showNotification === 'function') showNotification(`已按你的确认恢复 ${entries.length} 项内容`, 'success', 5000);
+            console.warn('[SAFE25] 用户确认恢复内容:', entries.map(e => `${e.baseKey}:${e.best.count}`).join(', '));
+            return approved;
+        };
+
+        const applyApprovedContentRecovery = (baseKey, currentValue) => {
+            if (Object.prototype.hasOwnProperty.call(approvedContentRecoveries, baseKey)) return approvedContentRecoveries[baseKey];
+            // 用户点取消后，缺失项按“当前为空”进入内存，避免 customIntros 这类内置默认值立刻写回并污染 lastGood/快照。
+            if (skippedContentRecoveries[baseKey] && (currentValue === null || currentValue === undefined)) return [];
+            return currentValue;
         };
 
         const recoverMissingContentArray = async (baseKey, currentValue) => {
@@ -599,11 +787,17 @@ const loadData = async () => {
             const currentKey = getStorageKey(baseKey);
             const candidates = [];
             const tryCollect = async (key, source, rawValue) => {
-                if (!key || key === currentKey) return;
+                if (!key) return;
+                // localforage 当前 key 为空时，localStorage 同名镜像可能仍保留非空数据；这个要作为候选给用户确认。
+                if (key === currentKey && source !== 'localStorage') return;
                 const legacyKey = APP_PREFIX + baseKey;
+                const scopedLastGoodKey = getStorageKey(baseKey + '_lastGood');
+                const legacyLastGoodKey = APP_PREFIX + baseKey + '_lastGood';
                 const looksLikeSessionKey = key.startsWith(APP_PREFIX) && key.endsWith('_' + baseKey);
                 const looksLikeLegacyKey = key === legacyKey;
-                if (!looksLikeSessionKey && !looksLikeLegacyKey) return;
+                const looksLikeSessionLastGoodKey = key.startsWith(APP_PREFIX) && key.endsWith('_' + baseKey + '_lastGood');
+                const looksLikeLegacyLastGoodKey = key === legacyLastGoodKey || key === scopedLastGoodKey;
+                if (!looksLikeSessionKey && !looksLikeLegacyKey && !looksLikeSessionLastGoodKey && !looksLikeLegacyLastGoodKey) return;
                 let value = rawValue;
                 if (value === undefined) {
                     try { value = await localforage.getItem(key); } catch(e) { value = null; }
@@ -630,14 +824,21 @@ const loadData = async () => {
                 }
             } catch(e) {}
 
-            if (!candidates.length) return currentValue;
+            try { await _collectGlobalContentSnapshotCandidates(baseKey, candidates); } catch(e) {}
+
+            if (!candidates.length) {
+                // 氛围感四项本身有内置默认库；异常空数组又没有旧数据可捞时，退回默认库，比空白页面强。
+                if (currentEmptyArray && ['customPokes', 'customStatuses', 'customMottos', 'customIntros'].includes(baseKey)) {
+                    clearContentClearedMarker(baseKey);
+                    return null;
+                }
+                return currentValue;
+            }
             candidates.sort((a, b) => b.count - a.count);
             const best = candidates[0];
-            try { await localforage.setItem(currentKey, best.value); } catch(e) {}
-            try { localStorage.setItem(currentKey, JSON.stringify(best.value)); } catch(e) {}
-            clearContentClearedMarker(baseKey);
-            console.warn(`[SAFE19] ${baseKey} 当前会话${currentMissing ? '缺失' : '为空'}，已从 ${best.source}:${best.key} 找回 ${best.count} 条`);
-            return best.value;
+            registerPendingContentRecovery(baseKey, currentMissing ? 'missing' : 'empty', best);
+            console.warn(`[SAFE25] ${baseKey} 当前会话${currentMissing ? '缺失' : '为空'}，发现可恢复候选 ${best.count} 条，等待用户确认，不自动写回`);
+            return currentValue;
         };
 
 
@@ -653,12 +854,12 @@ const loadData = async () => {
         const savedMessages = getVal(1);
         const savedBgGallery = getVal(2);
         let savedCustomReplies = getVal(3);
-        const savedPokes = getVal(4);
-        const savedStatuses = getVal(5);
-        const savedMottos = getVal(6);
-        const savedIntros = getVal(7);
-        const savedAnniversaries = getVal(8);
-        const savedStickers = getVal(9);
+        let savedPokes = getVal(4);
+        let savedStatuses = getVal(5);
+        let savedMottos = getVal(6);
+        let savedIntros = getVal(7);
+        let savedAnniversaries = getVal(8);
+        let savedStickers = getVal(9);
         const savedCustomThemes = getVal(10);
         const savedChatBg = getVal(11);
         const partnerAvatarSrc = getVal(12);
@@ -666,18 +867,29 @@ const loadData = async () => {
         const savedPartnerPersonas = getVal(14);
         const savedShowNameConfig = getVal(15);
         const savedThemeSchemes = getVal(16);
-        const savedMyStickers = getVal(17);
+        let savedMyStickers = getVal(17);
         let savedReplyGroups = getVal(18);
-        const savedPokeGroups = getVal(19);
-        const savedStatusGroups = getVal(20);
+        let savedPokeGroups = getVal(19);
+        let savedStatusGroups = getVal(20);
 
         savedCustomReplies = await recoverMissingContentArray('customReplies', savedCustomReplies);
         savedReplyGroups = await recoverMissingContentArray('customReplyGroups', savedReplyGroups);
+        savedPokes = await recoverMissingContentArray('customPokes', savedPokes);
+        savedStatuses = await recoverMissingContentArray('customStatuses', savedStatuses);
+        savedMottos = await recoverMissingContentArray('customMottos', savedMottos);
+        savedIntros = await recoverMissingContentArray('customIntros', savedIntros);
+        savedPokeGroups = await recoverMissingContentArray('customPokeGroups', savedPokeGroups);
+        savedStatusGroups = await recoverMissingContentArray('customStatusGroups', savedStatusGroups);
+        savedStickers = await recoverMissingContentArray('stickerLibrary', savedStickers);
+        savedMyStickers = await recoverMissingContentArray('myStickerLibrary', savedMyStickers);
+        savedAnniversaries = await recoverMissingContentArray('anniversaries', savedAnniversaries);
 
-        const savedMyPokes = await safeLfGet('myPokes');
+        let savedMyPokes = await safeLfGet('myPokes');
         let savedKaomojiLibrary = await safeLfGet('kaomojiLibrary');
         let savedKaomojiGroups = await safeLfGet('kaomojiGroups');
-        const savedStickerGroups = await safeLfGet('customStickerGroups');
+        let savedStickerGroups = await safeLfGet('customStickerGroups');
+        savedStickerGroups = await recoverMissingContentArray('customStickerGroups', savedStickerGroups);
+        savedMyPokes = await recoverMissingContentArray('myPokes', savedMyPokes);
         let savedCustomEmojis = await safeLfGet('customEmojis');
         let savedMoyuRecords = await safeLfGet('moyuRecords');
         let savedMoyuLocations = await safeLfGet('moyuLocations');
@@ -697,8 +909,35 @@ const loadData = async () => {
         const savedMoyuUnread = await safeLfGet('moyuUnread');
         const savedMoyuWorkSession = await safeLfGet('moyuWorkSession');
         const savedTransferData = await safeLfGet('transferData');
-        const savedVoices = await safeLfGet('customVoices');
-        const savedVoiceGroups = await safeLfGet('customVoiceGroups');
+        let savedVoices = await safeLfGet('customVoices');
+        let savedVoiceGroups = await safeLfGet('customVoiceGroups');
+        savedVoices = await recoverMissingContentArray('customVoices', savedVoices);
+        savedVoiceGroups = await recoverMissingContentArray('customVoiceGroups', savedVoiceGroups);
+
+        approvedContentRecoveries = await resolvePendingContentRecoveries();
+        savedCustomReplies = applyApprovedContentRecovery('customReplies', savedCustomReplies);
+        savedReplyGroups = applyApprovedContentRecovery('customReplyGroups', savedReplyGroups);
+        savedPokes = applyApprovedContentRecovery('customPokes', savedPokes);
+        savedStatuses = applyApprovedContentRecovery('customStatuses', savedStatuses);
+        savedMottos = applyApprovedContentRecovery('customMottos', savedMottos);
+        savedIntros = applyApprovedContentRecovery('customIntros', savedIntros);
+        savedPokeGroups = applyApprovedContentRecovery('customPokeGroups', savedPokeGroups);
+        savedStatusGroups = applyApprovedContentRecovery('customStatusGroups', savedStatusGroups);
+        savedStickers = applyApprovedContentRecovery('stickerLibrary', savedStickers);
+        savedMyStickers = applyApprovedContentRecovery('myStickerLibrary', savedMyStickers);
+        savedAnniversaries = applyApprovedContentRecovery('anniversaries', savedAnniversaries);
+        savedStickerGroups = applyApprovedContentRecovery('customStickerGroups', savedStickerGroups);
+        savedMyPokes = applyApprovedContentRecovery('myPokes', savedMyPokes);
+        savedKaomojiLibrary = applyApprovedContentRecovery('kaomojiLibrary', savedKaomojiLibrary);
+        savedKaomojiGroups = applyApprovedContentRecovery('kaomojiGroups', savedKaomojiGroups);
+        savedCustomEmojis = applyApprovedContentRecovery('customEmojis', savedCustomEmojis);
+        savedMoyuRecords = applyApprovedContentRecovery('moyuRecords', savedMoyuRecords);
+        savedMoyuLocations = applyApprovedContentRecovery('moyuLocations', savedMoyuLocations);
+        savedMoyuActivities = applyApprovedContentRecovery('moyuActivities', savedMoyuActivities);
+        savedMoyuActivityGroups = applyApprovedContentRecovery('moyuActivityGroups', savedMoyuActivityGroups);
+        savedMoyuLocationGroups = applyApprovedContentRecovery('moyuLocationGroups', savedMoyuLocationGroups);
+        savedVoices = applyApprovedContentRecovery('customVoices', savedVoices);
+        savedVoiceGroups = applyApprovedContentRecovery('customVoiceGroups', savedVoiceGroups);
 
         if (savedPartnerPersonas) partnerPersonas = savedPartnerPersonas;
 
@@ -1013,12 +1252,7 @@ function _tryRecoverFromBackup() {
 async function _safeSetPreserveNonEmpty(baseKey, value) {
     const fullKey = getStorageKey(baseKey);
     const allowEmpty = !!(window.__allowEmptyStorageKeys && window.__allowEmptyStorageKeys[baseKey]);
-    const recoverableContentKeys = [
-        'customReplies', 'customReplyGroups',
-        'kaomojiLibrary', 'customEmojis', 'moyuRecords', 'moyuActivities', 'moyuLocations',
-        'kaomojiGroups', 'moyuActivityGroups', 'moyuLocationGroups'
-    ];
-    const isRecoverableContentKey = recoverableContentKeys.includes(baseKey);
+    const isRecoverableContentKey = CONTENT_GUARD_KEYS.includes(baseKey);
     const markerKey = isRecoverableContentKey ? getStorageKey(baseKey + '_contentClearedAt') : null;
 
     // SAFE21：消息和用户内容库都禁止“异常空数组”覆盖已有非空数据。
@@ -1029,6 +1263,11 @@ async function _safeSetPreserveNonEmpty(baseKey, value) {
             if (Array.isArray(oldValue) && oldValue.length > 0) {
                 console.warn(`[saveData] 阻止空 ${baseKey} 覆盖非空旧数据:`, oldValue.length);
                 return oldValue;
+            }
+            const lastGoodValue = isRecoverableContentKey ? await localforage.getItem(getStorageKey(baseKey + '_lastGood')) : null;
+            if (Array.isArray(lastGoodValue) && lastGoodValue.length > 0) {
+                console.warn(`[saveData] ${baseKey} 当前已空，已阻止空写；lastGood 保留 ${lastGoodValue.length} 条，等待下次加载时由用户确认是否恢复`);
+                return lastGoodValue;
             }
         } catch(e) {}
     }
@@ -1042,6 +1281,12 @@ async function _safeSetPreserveNonEmpty(baseKey, value) {
             }
         }
         const ret = await localforage.setItem(fullKey, value);
+        if (isRecoverableContentKey && Array.isArray(value) && value.length > 0) {
+            try { await localforage.setItem(getStorageKey(baseKey + '_lastGood'), value); } catch(e) {}
+            try { await _updateGlobalContentSnapshot(baseKey, value, false); } catch(e) {}
+        } else if (isRecoverableContentKey && Array.isArray(value) && value.length === 0 && allowEmpty) {
+            try { await _updateGlobalContentSnapshot(baseKey, value, true); } catch(e) {}
+        }
         if (allowEmpty && window.__allowEmptyStorageKeys) delete window.__allowEmptyStorageKeys[baseKey];
         return ret;
     } catch (e) {

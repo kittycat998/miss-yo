@@ -1358,7 +1358,12 @@ function initComboMenu() {
                     setTimeout(simulateReply, settings.replyDelayMin + Math.random() * delayRange);
                 }, () => {
                     myStickerLibrary.splice(idx, 1);
-                    localforage.setItem(getStorageKey('myStickerLibrary'), myStickerLibrary);
+                    if (Array.isArray(myStickerLibrary) && myStickerLibrary.length === 0) {
+                        if (typeof _allowEmptyContentKeyIfNeeded === 'function') _allowEmptyContentKeyIfNeeded('myStickerLibrary', myStickerLibrary);
+                        else { window.__allowEmptyStorageKeys = window.__allowEmptyStorageKeys || {}; window.__allowEmptyStorageKeys.myStickerLibrary = true; }
+                    }
+                    if (typeof throttledSaveData === 'function') throttledSaveData();
+                    else localforage.setItem(getStorageKey('myStickerLibrary'), myStickerLibrary);
                     showNotification('✓ 已删除', 'success');
                     renderMyStickerLibrary();
                 });

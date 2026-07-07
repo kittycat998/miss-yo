@@ -127,6 +127,17 @@
         };
     }
 
+    function hasMediaLibraryContent(value) {
+        const lib = normalizeLibrary(value);
+        return lib.voice.length > 0 || lib.video.length > 0;
+    }
+
+    function allowEmptyMediaLibraryIfNeeded() {
+        if (hasMediaLibraryContent(mediaLibrary)) return;
+        window.__allowEmptyStorageKeys = window.__allowEmptyStorageKeys || {};
+        window.__allowEmptyStorageKeys[STORAGE_KEY] = true;
+    }
+
     function loadMediaLibrary() {
         try {
             const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
@@ -141,6 +152,23 @@
             if (typeof localforage !== 'undefined') {
                 const saved = await localforage.getItem(STORAGE_KEY);
                 if (saved && (Array.isArray(saved.voice) || Array.isArray(saved.video))) {
+                    if (!hasMediaLibraryContent(saved)) {
+                        const lastGood = await localforage.getItem(STORAGE_KEY + '_lastGood');
+                        if (hasMediaLibraryContent(lastGood)) {
+                            const lg = normalizeLibrary(lastGood);
+                            const ok = (typeof window !== 'undefined' && typeof window.confirm === 'function')
+                                ? window.confirm(`检测到媒体库当前为空，但有可恢复记录：语音 ${lg.voice.length} 条，视频 ${lg.video.length} 条。\n\n点“确定”恢复，点“取消”保持当前为空。`)
+                                : false;
+                            if (ok) {
+                                mediaLibrary = lg;
+                                try { await localforage.setItem(STORAGE_KEY, mediaLibrary); } catch(_e) {}
+                                mediaLibraryLoaded = true;
+                                renderMediaLibrary('voice');
+                                renderMediaLibrary('video');
+                                return;
+                            }
+                        }
+                    }
                     mediaLibrary = normalizeLibrary(saved);
                     mediaLibraryLoaded = true;
                     renderMediaLibrary('voice');
@@ -158,17 +186,35 @@
     }
 
     async function saveMediaLibrary() {
+        mediaLibrary = normalizeLibrary(mediaLibrary);
+        const allowEmpty = !!(window.__allowEmptyStorageKeys && window.__allowEmptyStorageKeys[STORAGE_KEY]);
         const meta = {
             voice: mediaLibrary.voice.map(item => ({ id: item.id, name: item.name, source: item.source, savedAt: item.savedAt || Date.now() })),
             video: mediaLibrary.video.map(item => ({ id: item.id, name: item.name, source: item.source, savedAt: item.savedAt || Date.now() }))
         };
         try {
             if (typeof localforage !== 'undefined') {
+                if (!hasMediaLibraryContent(mediaLibrary) && !allowEmpty) {
+                    const oldValue = await localforage.getItem(STORAGE_KEY);
+                    if (hasMediaLibraryContent(oldValue)) {
+                        console.warn('[mediaLibrary] 阻止空媒体库覆盖旧数据');
+                        mediaLibrary = normalizeLibrary(oldValue);
+                        return true;
+                    }
+                    const lastGood = await localforage.getItem(STORAGE_KEY + '_lastGood');
+                    if (hasMediaLibraryContent(lastGood)) {
+                        console.warn('[mediaLibrary] 已阻止空媒体库覆盖；lastGood 保留，等待下次加载时由用户确认是否恢复');
+                        return true;
+                    }
+                }
                 await localforage.setItem(STORAGE_KEY, mediaLibrary);
+                if (hasMediaLibraryContent(mediaLibrary)) await localforage.setItem(STORAGE_KEY + '_lastGood', mediaLibrary);
+                if (allowEmpty && window.__allowEmptyStorageKeys) delete window.__allowEmptyStorageKeys[STORAGE_KEY];
                 localStorage.setItem(STORAGE_META_KEY, JSON.stringify(meta));
                 return true;
             }
             localStorage.setItem(STORAGE_KEY, JSON.stringify(mediaLibrary));
+            if (allowEmpty && window.__allowEmptyStorageKeys) delete window.__allowEmptyStorageKeys[STORAGE_KEY];
             return true;
         } catch (e) {
             try {
@@ -1506,6 +1552,7 @@
         if (!mediaLibrary[kind] || !mediaLibrary[kind][index]) return;
         if (!confirm('确定删除这一条吗？')) return;
         mediaLibrary[kind].splice(index, 1);
+        allowEmptyMediaLibraryIfNeeded();
         await saveMediaLibrary();
         renderMediaLibrary(kind);
     };
