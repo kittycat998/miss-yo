@@ -98,8 +98,26 @@
 
     // ========== 节日检测 ==========
 
-    function getFestivals() {
-        var now = new Date();
+    function getLunarMonthDay(date) {
+        // 农历节日不能直接按公历月日判断。七夕是农历七月初七，不是公历 7/7。
+        try {
+            if (typeof Intl === 'undefined' || !Intl.DateTimeFormat) return null;
+            var parts = new Intl.DateTimeFormat('zh-u-ca-chinese', { month: 'numeric', day: 'numeric' }).formatToParts(date);
+            var month = null;
+            var day = null;
+            parts.forEach(function (part) {
+                if (part.type === 'month') month = parseInt(String(part.value).replace(/\D/g, ''), 10);
+                if (part.type === 'day') day = parseInt(String(part.value).replace(/\D/g, ''), 10);
+            });
+            if (!month || !day) return null;
+            return { month: month, day: day };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function getFestivals(date) {
+        var now = date || new Date();
         var m = now.getMonth() + 1;
         var d = now.getDate();
         var festivals = [
@@ -110,7 +128,6 @@
             { month: 5, day: 1, name: '劳动节', messages: ['劳动节快乐', '辛苦了~', '好好休息一下吧'] },
             { month: 5, day: 20, name: '520', messages: ['520快乐', '我爱你', '一生一世', '你是我心中唯一'] },
             { month: 6, day: 1, name: '儿童节', messages: ['儿童节快乐', '永远做个快乐的小孩', '今天你最大~'] },
-            { month: 7, day: 7, name: '七夕', messages: ['七夕快乐', '星河万里不如你', '鹊桥相会', '愿得一心人'] },
             { month: 10, day: 1, name: '国庆节', messages: ['国庆快乐', '放假快乐~', '祖国生日快乐'] },
             { month: 10, day: 31, name: '万圣节', messages: ['万圣节快乐', 'Trick or Treat!', '不给糖就捣蛋'] },
             { month: 11, day: 11, name: '双十一', messages: ['双十一快乐', '购物愉快~', '清空购物车'] },
@@ -118,7 +135,17 @@
             { month: 12, day: 25, name: '圣诞节', messages: ['圣诞快乐', 'Merry Christmas!', '铃儿响叮当'] },
             { month: 12, day: 31, name: '跨年', messages: ['跨年快乐', '一起迎接新年~', '辞旧迎新'] }
         ];
-        return festivals.filter(function (f) { return f.month === m && f.day === d; });
+        var lunarFestivals = [
+            { lunarMonth: 7, lunarDay: 7, name: '七夕', messages: ['七夕快乐', '星河万里不如你', '鹊桥相会', '愿得一心人'] }
+        ];
+        var matched = festivals.filter(function (f) { return f.month === m && f.day === d; });
+        var lunar = getLunarMonthDay(now);
+        if (lunar) {
+            lunarFestivals.forEach(function (f) {
+                if (f.lunarMonth === lunar.month && f.lunarDay === lunar.day) matched.push(f);
+            });
+        }
+        return matched;
     }
 
     // ========== 初始化余额数据 ==========
