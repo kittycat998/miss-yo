@@ -574,10 +574,77 @@ const loadData = async () => {
             }
         };
 
+        // SAFE21：内容库缺失/空数组恢复。
+        // 当前 key 缺失，或被坏版本写成 [] 时，从同源旧 key/旧全局 key 捞非空数组。
+        // 只有明确从新版 UI 删除到空并写入 cleared 标记时，才认为这是用户主动清空。
+        const CONTENT_RECOVERY_KEYS = [
+            'customReplies', 'customReplyGroups',
+            'kaomojiLibrary', 'customEmojis', 'moyuRecords', 'moyuActivities', 'moyuLocations',
+            'kaomojiGroups', 'moyuActivityGroups', 'moyuLocationGroups'
+        ];
+        const contentClearedMarkerKey = (baseKey) => getStorageKey(baseKey + '_contentClearedAt');
+        const isContentClearedByUser = (baseKey) => {
+            try { return !!localStorage.getItem(contentClearedMarkerKey(baseKey)); } catch(e) { return false; }
+        };
+        const clearContentClearedMarker = (baseKey) => {
+            try { localStorage.removeItem(contentClearedMarkerKey(baseKey)); } catch(e) {}
+        };
+
+        const recoverMissingContentArray = async (baseKey, currentValue) => {
+            const currentMissing = currentValue === null || currentValue === undefined;
+            const currentEmptyArray = Array.isArray(currentValue) && currentValue.length === 0;
+            if (!currentMissing && !currentEmptyArray) return currentValue;
+            if (currentEmptyArray && isContentClearedByUser(baseKey)) return currentValue;
+
+            const currentKey = getStorageKey(baseKey);
+            const candidates = [];
+            const tryCollect = async (key, source, rawValue) => {
+                if (!key || key === currentKey) return;
+                const legacyKey = APP_PREFIX + baseKey;
+                const looksLikeSessionKey = key.startsWith(APP_PREFIX) && key.endsWith('_' + baseKey);
+                const looksLikeLegacyKey = key === legacyKey;
+                if (!looksLikeSessionKey && !looksLikeLegacyKey) return;
+                let value = rawValue;
+                if (value === undefined) {
+                    try { value = await localforage.getItem(key); } catch(e) { value = null; }
+                }
+                if (typeof value === 'string') {
+                    try { value = JSON.parse(value); } catch(e) {}
+                }
+                if (Array.isArray(value) && value.length > 0) {
+                    candidates.push({ key, source, value, count: value.length });
+                }
+            };
+
+            try {
+                const keys = await localforage.keys();
+                for (const key of keys || []) await tryCollect(key, 'localforage');
+            } catch(e) {}
+            try {
+                const lsKeys = [];
+                for (let i = 0; i < localStorage.length; i++) lsKeys.push(localStorage.key(i));
+                for (const key of lsKeys) {
+                    let raw = null;
+                    try { raw = localStorage.getItem(key); } catch(e) {}
+                    await tryCollect(key, 'localStorage', raw);
+                }
+            } catch(e) {}
+
+            if (!candidates.length) return currentValue;
+            candidates.sort((a, b) => b.count - a.count);
+            const best = candidates[0];
+            try { await localforage.setItem(currentKey, best.value); } catch(e) {}
+            try { localStorage.setItem(currentKey, JSON.stringify(best.value)); } catch(e) {}
+            clearContentClearedMarker(baseKey);
+            console.warn(`[SAFE19] ${baseKey} 当前会话${currentMissing ? '缺失' : '为空'}，已从 ${best.source}:${best.key} 找回 ${best.count} 条`);
+            return best.value;
+        };
+
 
         // SAFE16：chatSettings 统一走原子存储层，不再在 loadData 内部临时定义一套评分/兜底逻辑。
         // 具体规则见上方“SAFE16: chatSettings 原子存储层”。
-        const recoverMoyuArrayFromSiblingSessions = async (baseKey, currentValue) => currentValue;
+        // SAFE19：摸鱼“内容库”恢复只在当前 key 缺失时发生，和 settings 回退不是一回事。
+        const recoverMoyuArrayFromSiblingSessions = recoverMissingContentArray;
 
 
 
@@ -585,7 +652,7 @@ const loadData = async () => {
         savedSettings = await _resolveChatSettingsForLoad(savedSettings);
         const savedMessages = getVal(1);
         const savedBgGallery = getVal(2);
-        const savedCustomReplies = getVal(3);
+        let savedCustomReplies = getVal(3);
         const savedPokes = getVal(4);
         const savedStatuses = getVal(5);
         const savedMottos = getVal(6);
@@ -600,20 +667,31 @@ const loadData = async () => {
         const savedShowNameConfig = getVal(15);
         const savedThemeSchemes = getVal(16);
         const savedMyStickers = getVal(17);
-        const savedReplyGroups = getVal(18);
+        let savedReplyGroups = getVal(18);
         const savedPokeGroups = getVal(19);
         const savedStatusGroups = getVal(20);
 
+        savedCustomReplies = await recoverMissingContentArray('customReplies', savedCustomReplies);
+        savedReplyGroups = await recoverMissingContentArray('customReplyGroups', savedReplyGroups);
+
         const savedMyPokes = await safeLfGet('myPokes');
-        const savedKaomojiLibrary = await safeLfGet('kaomojiLibrary');
-        const savedKaomojiGroups = await safeLfGet('kaomojiGroups');
+        let savedKaomojiLibrary = await safeLfGet('kaomojiLibrary');
+        let savedKaomojiGroups = await safeLfGet('kaomojiGroups');
         const savedStickerGroups = await safeLfGet('customStickerGroups');
+        let savedCustomEmojis = await safeLfGet('customEmojis');
         let savedMoyuRecords = await safeLfGet('moyuRecords');
         let savedMoyuLocations = await safeLfGet('moyuLocations');
         let savedMoyuActivities = await safeLfGet('moyuActivities');
+        let savedMoyuActivityGroups = await safeLfGet('moyuActivityGroups');
+        let savedMoyuLocationGroups = await safeLfGet('moyuLocationGroups');
+        savedKaomojiLibrary = await recoverMissingContentArray('kaomojiLibrary', savedKaomojiLibrary);
+        savedKaomojiGroups = await recoverMissingContentArray('kaomojiGroups', savedKaomojiGroups);
+        savedCustomEmojis = await recoverMissingContentArray('customEmojis', savedCustomEmojis);
         savedMoyuRecords = await recoverMoyuArrayFromSiblingSessions('moyuRecords', savedMoyuRecords);
         savedMoyuLocations = await recoverMoyuArrayFromSiblingSessions('moyuLocations', savedMoyuLocations);
         savedMoyuActivities = await recoverMoyuArrayFromSiblingSessions('moyuActivities', savedMoyuActivities);
+        savedMoyuActivityGroups = await recoverMissingContentArray('moyuActivityGroups', savedMoyuActivityGroups);
+        savedMoyuLocationGroups = await recoverMissingContentArray('moyuLocationGroups', savedMoyuLocationGroups);
 
         const savedCurrentMoyuRecord = await safeLfGet('currentMoyuRecord');
         const savedMoyuUnread = await safeLfGet('moyuUnread');
@@ -696,6 +774,8 @@ const loadData = async () => {
         if (savedMoyuRecords) moyuRecords = savedMoyuRecords;
         if (savedMoyuLocations) moyuLocations = savedMoyuLocations;
         if (savedMoyuActivities) window.moyuActivities = savedMoyuActivities;
+        if (savedMoyuActivityGroups) window.moyuActivityGroups = savedMoyuActivityGroups;
+        if (savedMoyuLocationGroups) window.moyuLocationGroups = savedMoyuLocationGroups;
         if (savedCurrentMoyuRecord) window.currentMoyuRecord = savedCurrentMoyuRecord;
         if (savedMoyuUnread) {
             moyuUnread = true;
@@ -726,7 +806,7 @@ const loadData = async () => {
         if (savedMyStickers) myStickerLibrary = savedMyStickers;
         if (savedCustomThemes) customThemes = savedCustomThemes;
         if (savedThemeSchemes) themeSchemes = savedThemeSchemes;
-        try { const ce = await localforage.getItem(getStorageKey('customEmojis')); if (ce && Array.isArray(ce)) customEmojis = ce; } catch(e) {}
+        if (savedCustomEmojis && Array.isArray(savedCustomEmojis)) customEmojis = savedCustomEmojis;
         window._customReplies = customReplies;
         window._stickerLibrary = stickerLibrary;
         window._kaomojiLibrary = kaomojiLibrary;
@@ -933,18 +1013,34 @@ function _tryRecoverFromBackup() {
 async function _safeSetPreserveNonEmpty(baseKey, value) {
     const fullKey = getStorageKey(baseKey);
     const allowEmpty = !!(window.__allowEmptyStorageKeys && window.__allowEmptyStorageKeys[baseKey]);
-    // 除 chatMessages 外，保存必须尊重当前内存值：用户删空就是删空，不再用旧数组自动顶回去。
-    // chatMessages 仍保留唯一保护：如果页面异常读成空数组，不让空消息覆盖已有聊天记录；清空聊天入口会直接写入 []，不会被这里阻拦。
-    if (baseKey === 'chatMessages' && Array.isArray(value) && value.length === 0 && !allowEmpty) {
+    const recoverableContentKeys = [
+        'customReplies', 'customReplyGroups',
+        'kaomojiLibrary', 'customEmojis', 'moyuRecords', 'moyuActivities', 'moyuLocations',
+        'kaomojiGroups', 'moyuActivityGroups', 'moyuLocationGroups'
+    ];
+    const isRecoverableContentKey = recoverableContentKeys.includes(baseKey);
+    const markerKey = isRecoverableContentKey ? getStorageKey(baseKey + '_contentClearedAt') : null;
+
+    // SAFE21：消息和用户内容库都禁止“异常空数组”覆盖已有非空数据。
+    // 真的在 UI 里删到空时，业务代码会打 __allowEmptyStorageKeys 放行，并记录 cleared 标记，避免下次又从旧 key 顶回来。
+    if ((baseKey === 'chatMessages' || isRecoverableContentKey) && Array.isArray(value) && value.length === 0 && !allowEmpty) {
         try {
             const oldValue = await localforage.getItem(fullKey);
             if (Array.isArray(oldValue) && oldValue.length > 0) {
-                console.warn('[saveData] 阻止空聊天数组覆盖非空旧聊天记录:', oldValue.length);
+                console.warn(`[saveData] 阻止空 ${baseKey} 覆盖非空旧数据:`, oldValue.length);
                 return oldValue;
             }
         } catch(e) {}
     }
+
     try {
+        if (isRecoverableContentKey && Array.isArray(value)) {
+            if (value.length > 0) {
+                try { localStorage.removeItem(markerKey); } catch(e) {}
+            } else if (allowEmpty) {
+                try { localStorage.setItem(markerKey, String(Date.now())); } catch(e) {}
+            }
+        }
         const ret = await localforage.setItem(fullKey, value);
         if (allowEmpty && window.__allowEmptyStorageKeys) delete window.__allowEmptyStorageKeys[baseKey];
         return ret;
@@ -983,6 +1079,8 @@ const saveData = async () => {
         { key: 'moyuRecords',             val: () => _safeSetPreserveNonEmpty('moyuRecords', moyuRecords || []) },
         { key: 'moyuLocations',           val: () => _safeSetPreserveNonEmpty('moyuLocations', moyuLocations || []) },
         { key: 'moyuActivities',          val: () => _safeSetPreserveNonEmpty('moyuActivities', window.moyuActivities || []) },
+        { key: 'moyuActivityGroups',      val: () => _safeSetPreserveNonEmpty('moyuActivityGroups', window.moyuActivityGroups || []) },
+        { key: 'moyuLocationGroups',      val: () => _safeSetPreserveNonEmpty('moyuLocationGroups', window.moyuLocationGroups || []) },
         { key: 'currentMoyuRecord',       val: () => localforage.setItem(getStorageKey('currentMoyuRecord'), window.currentMoyuRecord || null) },
         { key: 'moyuUnread',              val: () => localforage.setItem(getStorageKey('moyuUnread'), moyuUnread || false) },
         { key: 'moyuWorkSession',         val: () => localforage.setItem(getStorageKey('moyuWorkSession'), window.moyuWorkSession || null) },

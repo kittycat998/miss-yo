@@ -701,6 +701,10 @@ window.removeMoyuLocation = function (index) {
 
     if (moyuLocations && index >= 0 && index < moyuLocations.length) {
         moyuLocations.splice(index, 1);
+        if (moyuLocations.length === 0) {
+            window.__allowEmptyStorageKeys = window.__allowEmptyStorageKeys || {};
+            window.__allowEmptyStorageKeys.moyuLocations = true;
+        }
         if (typeof throttledSaveData === 'function') throttledSaveData();
         window.renderMoyuStats();
         window.renderMoyuLocations();

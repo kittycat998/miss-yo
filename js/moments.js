@@ -4048,6 +4048,16 @@
     };
 
     momentsData.unshift(newMoment);
+
+    // TA的手机：用户发布朋友圈时实时接入收藏链路。
+    // 之前聊天消息有 tryCollectChat，朋友圈没有对应调用，导致 TA 的手机「朋友圈」长期为空。
+    try {
+      if (window.TaPhoneApp && typeof window.TaPhoneApp.tryCollectMoment === 'function') {
+        window.TaPhoneApp.tryCollectMoment(newMoment.text || '', newMoment.time, newMoment);
+      }
+      window.dispatchEvent(new CustomEvent('moments:published', { detail: { moment: newMoment } }));
+    } catch(e) {}
+
     await saveMomentsToStorage();
     clearPublishDraft();
     resetPublishForm(container);
@@ -5178,6 +5188,13 @@
       await loadMomentsFriends();  // 初始化好友列表（包含伴侣和自定义好友）
       await renderMoments();
 
+      // 通知 TA 的手机：朋友圈数据已经从存储恢复完毕，可以扫描历史朋友圈。
+      try {
+        window.dispatchEvent(new CustomEvent('moments:data-ready', { detail: { moments: momentsData } }));
+        if (window.TaPhoneApp && typeof window.TaPhoneApp.scanMomentsHistory === 'function') {
+          window.TaPhoneApp.scanMomentsHistory(momentsData);
+        }
+      } catch(e) {}
 
       
       // 如果有待显示的通知，渲染它们
@@ -5306,6 +5323,7 @@
     
     // 渲染
     renderMoments,
+    getMomentsData: function() { return momentsData; },
     
     // 时间格式化
     formatMomentTime,

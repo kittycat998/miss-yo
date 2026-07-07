@@ -114,7 +114,7 @@
         },
         {
             id: 'tools', label: '地图 / 记账 / 日记 / 摸鱼', flag: 'inclSet',
-            localforageNeedles: ['mapData', 'accountingRecords', 'accountingLabels', 'diaryTodos', 'diaryHabits', 'diaryHabitRecords', 'diaryPeriodRecords', 'diaryAnniversaries', 'diaryTodoCategories', 'moyuRecords', 'moyuLocations', 'moyuActivities', 'currentMoyuRecord', 'moyuUnread', 'moyuWorkSession'],
+            localforageNeedles: ['mapData', 'accountingRecords', 'accountingLabels', 'diaryTodos', 'diaryHabits', 'diaryHabitRecords', 'diaryPeriodRecords', 'diaryAnniversaries', 'diaryTodoCategories', 'moyuRecords', 'moyuLocations', 'moyuActivities', 'moyuActivityGroups', 'moyuLocationGroups', 'currentMoyuRecord', 'moyuUnread', 'moyuWorkSession'],
             localStorageNeedles: ['diaryPeriodLastReminderDate']
         },
         {

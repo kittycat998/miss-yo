@@ -13,16 +13,38 @@
     let collections = { chat: [], moments: [] };
     let chatSortMode = 'collected'; // 'collected' 按收藏时间, 'original-asc' 按发言时间正序, 'original-desc' 按发言时间倒序
 
+    function currentObjectId() {
+        return (window.SESSION_ID || location.hash.replace(/^#/, '') || 'default').replace(/[^\w-]/g, '_');
+    }
+
+    function scopedMomentsKey(key) {
+        return 'moments_' + currentObjectId() + '_' + key;
+    }
+
+    function normalizeTimestamp(value) {
+        if (value instanceof Date) return value.getTime();
+        if (typeof value === 'number') return value;
+        if (typeof value === 'string') {
+            const n = Number(value);
+            if (Number.isFinite(n)) return n;
+            const parsed = Date.parse(value);
+            if (Number.isFinite(parsed)) return parsed;
+        }
+        return Date.now();
+    }
+
     // 加载收藏数据
     function loadCollections() {
         try {
             const saved = localStorage.getItem(STORAGE_KEY);
             if (saved) {
                 const parsed = JSON.parse(saved);
-                if (parsed.chat) collections.chat = parsed.chat;
-                if (parsed.moments) collections.moments = parsed.moments;
+                collections.chat = Array.isArray(parsed.chat) ? parsed.chat : [];
+                collections.moments = Array.isArray(parsed.moments) ? parsed.moments : [];
             }
         } catch(e) {}
+        if (!Array.isArray(collections.chat)) collections.chat = [];
+        if (!Array.isArray(collections.moments)) collections.moments = [];
     }
 
     // 保存收藏数据
@@ -34,20 +56,41 @@
         }
     }
 
+    function hasCollection(type, content, originalTime, extra) {
+        if (!collections[type]) collections[type] = [];
+        const t = normalizeTimestamp(originalTime);
+        const momentId = extra && extra.momentId !== undefined ? String(extra.momentId) : '';
+        return collections[type].some(item => {
+            if (momentId && item.momentId !== undefined && String(item.momentId) === momentId) return true;
+            return String(item.content || '') === String(content || '') && normalizeTimestamp(item.originalTime) === t;
+        });
+    }
+
     // 添加收藏
     function addCollection(type, content, originalTime, extra) {
+        content = String(content || '').trim();
+        if (!content) return false;
+        const ts = normalizeTimestamp(originalTime);
+        if (hasCollection(type, content, ts, extra)) return false;
         const item = {
             id: Date.now() + Math.random(),
             content: content,
-            originalTime: originalTime || Date.now(),
+            originalTime: ts,
             collectedTime: Date.now()
         };
         if (extra) {
             if (extra.msgType) item.msgType = extra.msgType;
             if (extra.shareData) item.shareData = extra.shareData;
+            if (extra.momentId !== undefined) item.momentId = extra.momentId;
+            if (extra.author) item.author = extra.author;
+            if (extra.imagesCount) item.imagesCount = extra.imagesCount;
+            if (extra.hasVideo) item.hasVideo = true;
+            if (extra.hasSticker) item.hasSticker = true;
+            if (extra.linkTitle) item.linkTitle = extra.linkTitle;
         }
         collections[type].unshift(item);
         saveCollections();
+        return true;
     }
 
     // 删除收藏（带确认提示）
@@ -75,59 +118,130 @@
         return false;
     }
 
+    function buildMomentContent(moment, fallbackText) {
+        const text = String(fallbackText || (moment && moment.text) || '').trim();
+        if (text) return text;
+        if (moment && moment.link && moment.link.title) return '【链接：' + moment.link.title + '】';
+        if (moment && moment.video) return '【视频朋友圈】' + (moment.video.duration ? ' ' + moment.video.duration : '');
+        if (moment && moment.sticker) return '【表情朋友圈】';
+        if (moment && Array.isArray(moment.images) && moment.images.length > 0) return '【图片朋友圈】' + moment.images.length + '张';
+        return '';
+    }
+
+    function isUserMoment(moment) {
+        if (!moment || typeof moment !== 'object') return false;
+        // 新版自己发布的朋友圈会带 author: 'me'；旧数据可能没有 author，按用户旧数据兼容处理。
+        if (moment.author === 'me' || moment.author === 'user') return true;
+        if (!moment.author && !moment.authorId) return true;
+        return false;
+    }
+
+    function getMomentExtra(momentRef) {
+        if (!momentRef || typeof momentRef !== 'object') return null;
+        return {
+            momentId: momentRef.id,
+            author: momentRef.author,
+            imagesCount: Array.isArray(momentRef.images) ? momentRef.images.length : 0,
+            hasVideo: !!momentRef.video,
+            hasSticker: !!momentRef.sticker,
+            linkTitle: momentRef.link && momentRef.link.title ? momentRef.link.title : ''
+        };
+    }
+
     // 尝试收藏朋友圈（返回是否收藏成功）
     function tryCollectMoment(text, timestamp, momentRef) {
-        if (!text || text.trim().length === 0) return false;
+        if (momentRef && !isUserMoment(momentRef)) return false;
+        const content = buildMomentContent(momentRef, text);
+        if (!content) return false;
+        const ts = normalizeTimestamp(timestamp || (momentRef && momentRef.time));
+        const extra = getMomentExtra(momentRef);
+        if (hasCollection('moments', content, ts, extra)) return false;
         if (Math.random() < MOMENTS_CHANCE) {
-            addCollection('moments', text.trim(), timestamp);
+            const added = addCollection('moments', content, ts, extra);
             // 在原始朋友圈上打标记
-            if (momentRef && typeof momentRef === 'object') {
+            if (added && momentRef && typeof momentRef === 'object') {
                 momentRef.taPhoneCollected = true;
             }
-            return true;
+            return added;
         }
         return false;
     }
 
-    // 扫描历史内容（只扫描未标记的消息）
-    function scanHistory() {
-        if (typeof messages !== 'undefined' && Array.isArray(messages)) {
-            messages.forEach(msg => {
-                // 跳过已标记的消息
-                if (msg.taPhoneCollected) return;
-                if (msg.sender === 'user' && msg.text && msg.text.trim()) {
-                    const alreadyCollected = collections.chat.some(c =>
-                        c.content === msg.text.trim() && c.originalTime === msg.timestamp.getTime()
-                    );
-                    if (!alreadyCollected && Math.random() < CHAT_HISTORY_CHANCE) {
-                        var extra = null;
-                        if (msg.type === 'share' && msg.shareData) {
-                            extra = { msgType: msg.type, shareData: msg.shareData };
-                        }
-                        addCollection('chat', msg.text.trim(), msg.timestamp.getTime(), extra);
-                        // 打标记
-                        msg.taPhoneCollected = true;
-                    }
-                }
-            });
+    async function readStoredMoments() {
+        if (window.MomentsApp && typeof window.MomentsApp.getMomentsData === 'function') {
+            const live = window.MomentsApp.getMomentsData();
+            if (Array.isArray(live) && live.length > 0) return live;
         }
 
-        if (typeof momentsData !== 'undefined' && Array.isArray(momentsData)) {
-            momentsData.forEach(moment => {
-                // 跳过已标记的朋友圈
-                if (moment.taPhoneCollected) return;
-                if (moment.text && moment.text.trim()) {
-                    const alreadyCollected = collections.moments.some(c =>
-                        c.content === moment.text.trim() && c.originalTime === moment.time
-                    );
-                    if (!alreadyCollected && Math.random() < MOMENTS_HISTORY_CHANCE) {
-                        addCollection('moments', moment.text.trim(), moment.time);
-                        // 打标记
-                        moment.taPhoneCollected = true;
+        const candidates = [];
+        if (typeof localforage !== 'undefined') {
+            try { candidates.push(await localforage.getItem(scopedMomentsKey('moments_data_v2'))); } catch(e) {}
+            try { candidates.push(await localforage.getItem('moments_data_v2')); } catch(e) {}
+        }
+        try {
+            const scopedRaw = localStorage.getItem(scopedMomentsKey('moments_data'));
+            if (scopedRaw) candidates.push(JSON.parse(scopedRaw));
+        } catch(e) {}
+        try {
+            const legacyRaw = localStorage.getItem('moments_data');
+            if (legacyRaw) candidates.push(JSON.parse(legacyRaw));
+        } catch(e) {}
+
+        for (const item of candidates) {
+            if (Array.isArray(item) && item.length > 0) return item;
+        }
+        return [];
+    }
+
+    function scanChatHistory() {
+        if (typeof messages === 'undefined' || !Array.isArray(messages)) return 0;
+        let count = 0;
+        messages.forEach(msg => {
+            // 跳过已标记的消息
+            if (msg.taPhoneCollected) return;
+            if (msg.sender === 'user' && msg.text && String(msg.text).trim()) {
+                const text = String(msg.text).trim();
+                const ts = normalizeTimestamp(msg.timestamp);
+                var extra = null;
+                if (msg.type === 'share' && msg.shareData) {
+                    extra = { msgType: msg.type, shareData: msg.shareData };
+                }
+                if (!hasCollection('chat', text, ts, extra) && Math.random() < CHAT_HISTORY_CHANCE) {
+                    if (addCollection('chat', text, ts, extra)) {
+                        msg.taPhoneCollected = true;
+                        count++;
                     }
                 }
-            });
-        }
+            }
+        });
+        return count;
+    }
+
+    async function scanMomentsHistory(momentList) {
+        const list = Array.isArray(momentList) ? momentList : await readStoredMoments();
+        if (!Array.isArray(list) || list.length === 0) return 0;
+        let count = 0;
+        list.forEach(moment => {
+            // 跳过已标记的朋友圈；只收藏用户自己发过的朋友圈
+            if (moment.taPhoneCollected || !isUserMoment(moment)) return;
+            const content = buildMomentContent(moment);
+            if (!content) return;
+            const ts = normalizeTimestamp(moment.time || moment.timestamp || moment.id);
+            const extra = getMomentExtra(moment);
+            if (!hasCollection('moments', content, ts, extra) && Math.random() < MOMENTS_HISTORY_CHANCE) {
+                if (addCollection('moments', content, ts, extra)) {
+                    moment.taPhoneCollected = true;
+                    count++;
+                }
+            }
+        });
+        return count;
+    }
+
+    // 扫描历史内容（只扫描未标记的消息）
+    async function scanHistory() {
+        scanChatHistory();
+        return scanMomentsHistory();
     }
 
     // 格式化时间
@@ -348,6 +462,11 @@
         } else {
             updateTitle(type === 'chat' ? '聊天' : '朋友圈');
             renderList(type);
+            if (type === 'moments') {
+                scanMomentsHistory().then(function() { renderList('moments'); }).catch(function(e) {
+                    console.warn('[TA的手机] 扫描朋友圈历史失败:', e);
+                });
+            }
             // 聊天页显示排序选项
             const sortBar = document.getElementById('ta-phone-sort-bar');
             if (sortBar) {
@@ -538,6 +657,19 @@
             _historyScanned = true;
             setTimeout(scanHistory, 2000);
         }
+        if (!window.__taPhoneMomentsBridgeBound) {
+            window.__taPhoneMomentsBridgeBound = true;
+            window.addEventListener('moments:data-ready', function(e) {
+                const list = e && e.detail && Array.isArray(e.detail.moments) ? e.detail.moments : null;
+                scanMomentsHistory(list).catch(function(err) { console.warn('[TA的手机] 朋友圈数据就绪扫描失败:', err); });
+            });
+            window.addEventListener('moments:published', function(e) {
+                // 朋友圈发布时 moments.js 已经直接调用 tryCollectMoment；这里仅保留事件监听位，
+                // 避免未来别的入口只派事件时断线，但不重复抽概率。
+                const moment = e && e.detail && e.detail.moment;
+                if (moment && moment.taPhoneCollected) saveCollections();
+            });
+        }
     }
 
     // 暴露到全局
@@ -551,6 +683,8 @@
         deleteCollection,
         tryCollectChat,
         tryCollectMoment,
+        scanHistory,
+        scanMomentsHistory,
         showGiftReplies,
         setChatSortMode
     };

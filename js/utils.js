@@ -509,7 +509,7 @@ async function importAllData(file) {
             {
                 id: 'tools',
                 label: '地图 / 记账 / 日记 / 摸鱼',
-                indexedDBNeedles: ['map', 'Map', 'accountingRecords', 'accountingLabels', 'diaryTodos', 'diaryHabits', 'diaryHabitRecords', 'diaryPeriodRecords', 'diaryAnniversaries', 'diaryTodoCategories', 'moyuRecords', 'moyuLocations', 'moyuActivities', 'currentMoyuRecord', 'moyuUnread', 'moyuWorkSession'],
+                indexedDBNeedles: ['map', 'Map', 'accountingRecords', 'accountingLabels', 'diaryTodos', 'diaryHabits', 'diaryHabitRecords', 'diaryPeriodRecords', 'diaryAnniversaries', 'diaryTodoCategories', 'moyuRecords', 'moyuLocations', 'moyuActivities', 'moyuActivityGroups', 'moyuLocationGroups', 'currentMoyuRecord', 'moyuUnread', 'moyuWorkSession'],
                 localStorageNeedles: ['diaryPeriodLastReminderDate']
             },
             {

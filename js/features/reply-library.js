@@ -55,6 +55,21 @@ function _tabHasGroups(tab) {
     return tab === 'custom' || tab === 'pokes' || tab === 'statuses' || tab === 'kaomojis' || tab === 'stickers' || tab === 'moyu' || tab === 'moyuLocations' || tab === 'voices';
 }
 
+function _allowEmptyContentKeyIfNeeded(baseKey, arr) {
+    if (Array.isArray(arr) && arr.length === 0) {
+        window.__allowEmptyStorageKeys = window.__allowEmptyStorageKeys || {};
+        window.__allowEmptyStorageKeys[baseKey] = true;
+    }
+}
+
+function _allowEmptyGroupCtxIfNeeded(ctx) {
+    if (!ctx || !Array.isArray(ctx.groups) || ctx.groups.length !== 0) return;
+    if (ctx.groups === window.customReplyGroups) _allowEmptyContentKeyIfNeeded('customReplyGroups', ctx.groups);
+    else if (ctx.groups === window.kaomojiGroups) _allowEmptyContentKeyIfNeeded('kaomojiGroups', ctx.groups);
+    else if (ctx.groups === window.moyuActivityGroups) _allowEmptyContentKeyIfNeeded('moyuActivityGroups', ctx.groups);
+    else if (ctx.groups === window.moyuLocationGroups) _allowEmptyContentKeyIfNeeded('moyuLocationGroups', ctx.groups);
+}
+
 let _batchSelectedIndices = new Set();
 let _batchModeActive = false;
 let _batchModeTarget = 'custom'; // 'custom' or 'stickers' (depends on currentSubTab when batch mode enabled)
@@ -625,6 +640,7 @@ function _renderModernToolbar() {
             } else if (isKaomojisTab) {
                 const deletedTexts = indices.map(i => kaomojiLibrary[i]);
                 indices.forEach(i => kaomojiLibrary.splice(i, 1));
+                _allowEmptyContentKeyIfNeeded('kaomojiLibrary', kaomojiLibrary);
                 if (window.kaomojiGroups) {
                     window.kaomojiGroups.forEach(g => {
                         if (g.items) g.items = g.items.filter(t => !deletedTexts.includes(t));
@@ -639,6 +655,7 @@ function _renderModernToolbar() {
                 const deletedTexts = indices.map(i => activities[i]);
                 indices.forEach(i => activities.splice(i, 1));
                 window.moyuActivities = activities;
+                _allowEmptyContentKeyIfNeeded('moyuActivities', window.moyuActivities || []);
                 if (window.moyuActivityGroups) {
                     window.moyuActivityGroups.forEach(g => {
                         if (g.items) g.items = g.items.filter(t => !deletedTexts.includes(t));
@@ -651,6 +668,7 @@ function _renderModernToolbar() {
             } else if (isMoyuLocTab) {
                 const deletedTexts = indices.map(i => moyuLocations[i]);
                 indices.forEach(i => moyuLocations.splice(i, 1));
+                _allowEmptyContentKeyIfNeeded('moyuLocations', moyuLocations);
                 if (window.moyuLocationGroups) {
                     window.moyuLocationGroups.forEach(g => {
                         if (g.items) g.items = g.items.filter(t => !deletedTexts.includes(t));
@@ -662,6 +680,7 @@ function _renderModernToolbar() {
                 showNotification(`已删除 ${indices.length} 个地点`, 'success');
             } else if (isEmojisTab) {
                 indices.forEach(i => customEmojis.splice(i, 1));
+                _allowEmptyContentKeyIfNeeded('customEmojis', customEmojis);
                 _batchSelectedIndices.clear();
                 throttledSaveData();
                 renderReplyLibrary();
@@ -693,6 +712,7 @@ function _renderModernToolbar() {
             } else {
                 const deletedTexts = indices.map(i => customReplies[i]);
                 indices.forEach(i => customReplies.splice(i, 1));
+                _allowEmptyContentKeyIfNeeded('customReplies', customReplies);
                 if (customReplyGroups) {
                     customReplyGroups.forEach(g => {
                         if (g.items) g.items = g.items.filter(t => !deletedTexts.includes(t));
@@ -1026,6 +1046,7 @@ function _renderEmojiTab(list, itemsToRender) {
                 div.querySelector('.emoji-custom-del').addEventListener('click', e => {
                     e.stopPropagation();
                     customEmojis.splice(idx, 1);
+                    _allowEmptyContentKeyIfNeeded('customEmojis', customEmojis);
                     throttledSaveData();
                     renderReplyLibrary();
                 });
@@ -1680,6 +1701,7 @@ function _showGroupManager() {
                 } else if (action === 'del') {
                     if (confirm(`删除分组「${groups[i].name}」？（内容不会被删除）`)) {
                         groups.splice(i, 1);
+                        _allowEmptyGroupCtxIfNeeded(ctx);
                         throttledSaveData(); render(); renderReplyLibrary();
                     }
                 }
@@ -1991,8 +2013,14 @@ function deleteItem(index) {
     if (!confirm('确定删除吗？')) return;
     const ctx = _getGroupCtx();
     const item = _tabHasGroups() ? ctx.items[index] : null;
-    if (currentMajorTab === 'reply' && currentSubTab === 'custom') customReplies.splice(index, 1);
-    else if (currentSubTab === 'kaomojis') kaomojiLibrary.splice(index, 1);
+    if (currentMajorTab === 'reply' && currentSubTab === 'custom') {
+        customReplies.splice(index, 1);
+        _allowEmptyContentKeyIfNeeded('customReplies', customReplies);
+    }
+    else if (currentSubTab === 'kaomojis') {
+        kaomojiLibrary.splice(index, 1);
+        _allowEmptyContentKeyIfNeeded('kaomojiLibrary', kaomojiLibrary);
+    }
     else if (currentSubTab === 'pokes') customPokes.splice(index, 1);
     else if (currentSubTab === 'statuses') customStatuses.splice(index, 1);
     else if (currentSubTab === 'mottos') customMottos.splice(index, 1);
@@ -2001,8 +2029,12 @@ function deleteItem(index) {
         const activities = window.moyuActivities || [];
         activities.splice(index, 1);
         window.moyuActivities = activities;
+        _allowEmptyContentKeyIfNeeded('moyuActivities', window.moyuActivities || []);
     }
-    else if (currentMajorTab === 'moyu' && currentSubTab === 'moyuLocations') moyuLocations.splice(index, 1);
+    else if (currentMajorTab === 'moyu' && currentSubTab === 'moyuLocations') {
+        moyuLocations.splice(index, 1);
+        _allowEmptyContentKeyIfNeeded('moyuLocations', moyuLocations);
+    }
     if (item && ctx.groups) {
         ctx.groups.forEach(g => { if (g.items) g.items = g.items.filter(t => t !== item); });
     }
@@ -2082,30 +2114,44 @@ function _showExportUI() {
         { id: '_re_pokg',     icon: ICONS.folderBig, label: '拍一拍分组',    count: (window.customPokeGroups||[]).length,     key: 'customPokeGroups',   extra: true },
         { id: '_re_statg',    icon: ICONS.folderBig, label: '对方状态分组',  count: (window.customStatusGroups||[]).length,   key: 'customStatusGroups', extra: true },
         { id: '_re_kaomg',    icon: ICONS.folderBig, label: '颜文字分组',    count: (window.kaomojiGroups||[]).length,        key: 'kaomojiGroups',      extra: true },
+        { id: '_re_moyug',    icon: ICONS.folderBig, label: '摸鱼活动分组',  count: (window.moyuActivityGroups||[]).length,   key: 'moyuActivityGroups', extra: true },
+        { id: '_re_moyulg',   icon: ICONS.folderBig, label: '工作地点分组',  count: (window.moyuLocationGroups||[]).length,   key: 'moyuLocationGroups', extra: true },
     ];
 
     // 检测当前 tab 决定哪个分组有「按分组导出」选项
-    const replyGroupsExist  = customReplyGroups        && customReplyGroups.length > 0;
-    const pokeGroupsExist   = window.customPokeGroups  && window.customPokeGroups.length > 0;
+    const replyGroupsExist  = customReplyGroups         && customReplyGroups.length > 0;
+    const pokeGroupsExist   = window.customPokeGroups   && window.customPokeGroups.length > 0;
     const statusGroupsExist = window.customStatusGroups && window.customStatusGroups.length > 0;
+    const kaomojiGroupsExist = window.kaomojiGroups     && window.kaomojiGroups.length > 0;
+    const moyuActivityGroupsExist = window.moyuActivityGroups && window.moyuActivityGroups.length > 0;
+    const moyuLocationGroupsExist = window.moyuLocationGroups && window.moyuLocationGroups.length > 0;
     const onAnnTab          = currentMajorTab === 'announcement';
-    const anyGroupExists    = replyGroupsExist || pokeGroupsExist || statusGroupsExist || onAnnTab;
+    const anyGroupExists    = replyGroupsExist || pokeGroupsExist || statusGroupsExist || kaomojiGroupsExist || moyuActivityGroupsExist || moyuLocationGroupsExist || onAnnTab;
 
     // 根据当前 tab 决定「按分组导出」对应哪个类型
-    const onPokeTab   = currentMajorTab === 'atmosphere' && currentSubTab === 'pokes';
-    const onStatusTab = currentMajorTab === 'atmosphere' && currentSubTab === 'statuses';
+    const onPokeTab    = currentMajorTab === 'atmosphere' && currentSubTab === 'pokes';
+    const onStatusTab  = currentMajorTab === 'atmosphere' && currentSubTab === 'statuses';
+    const onKaomojiTab = currentMajorTab === 'reply' && currentSubTab === 'kaomojis';
+    const onMoyuTab    = currentMajorTab === 'moyu' && currentSubTab === 'moyu';
+    const onMoyuLocTab = currentMajorTab === 'moyu' && currentSubTab === 'moyuLocations';
     let groupExportType = null;
-    if (onAnnTab)                          groupExportType = 'announcement';
-    if (onPokeTab   && pokeGroupsExist)    groupExportType = 'pokes';
-    if (onStatusTab && statusGroupsExist)  groupExportType = 'statuses';
-    // 只有在字卡 tab（非拍一拍/状态/公告 tab）时才 fallback 到字卡分组
-    if (!groupExportType && !onPokeTab && !onStatusTab && !onAnnTab && replyGroupsExist) groupExportType = 'replies';
+    if (onAnnTab)                                   groupExportType = 'announcement';
+    if (onPokeTab    && pokeGroupsExist)            groupExportType = 'pokes';
+    if (onStatusTab  && statusGroupsExist)          groupExportType = 'statuses';
+    if (onKaomojiTab && kaomojiGroupsExist)         groupExportType = 'kaomojis';
+    if (onMoyuTab    && moyuActivityGroupsExist)    groupExportType = 'moyuActivities';
+    if (onMoyuLocTab && moyuLocationGroupsExist)    groupExportType = 'moyuLocations';
+    // 只有在主字卡 tab 时才 fallback 到字卡分组
+    if (!groupExportType && currentMajorTab === 'reply' && currentSubTab === 'custom' && replyGroupsExist) groupExportType = 'replies';
 
     const groupDescMap = {
-        replies:      '仅导出指定分组的字卡内容',
-        pokes:        '仅导出指定分组的拍一拍内容',
-        statuses:     '仅导出指定分组的对方状态内容',
-        announcement: '选择要导出的公告内容模块',
+        replies:        '仅导出指定分组的字卡内容',
+        pokes:          '仅导出指定分组的拍一拍内容',
+        statuses:       '仅导出指定分组的对方状态内容',
+        kaomojis:       '仅导出指定分组的颜文字',
+        moyuActivities: '仅导出指定分组的摸鱼活动',
+        moyuLocations:  '仅导出指定分组的工作地点',
+        announcement:   '选择要导出的公告内容模块',
     };
 
     if (anyGroupExists) {
@@ -2224,9 +2270,12 @@ function _showGroupExportPicker(type) {
     type = type || 'replies';
 
     const cfgMap = {
-        replies:  { groups: window.customReplyGroups  || [], items: customReplies,   groupKey: 'customReplyGroups',  itemKey: 'customReplies',  moduleTag: ['replies','groups'],       filePrefix: 'reply-groups',  label: '字卡',    successUnit: '条字卡' },
-        pokes:    { groups: window.customPokeGroups   || [], items: customPokes,      groupKey: 'customPokeGroups',   itemKey: 'customPokes',    moduleTag: ['pokes','pokeGroups'],     filePrefix: 'poke-groups',   label: '拍一拍',  successUnit: '条拍一拍' },
-        statuses: { groups: window.customStatusGroups || [], items: customStatuses,   groupKey: 'customStatusGroups', itemKey: 'customStatuses', moduleTag: ['statuses','statusGroups'],filePrefix: 'status-groups', label: '对方状态',successUnit: '条状态' },
+        replies:        { groups: window.customReplyGroups    || [], items: customReplies,                 groupKey: 'customReplyGroups',    itemKey: 'customReplies',    moduleTag: ['replies','groups'],                    filePrefix: 'reply-groups',      label: '字卡',      successUnit: '条字卡' },
+        pokes:          { groups: window.customPokeGroups     || [], items: customPokes,                   groupKey: 'customPokeGroups',     itemKey: 'customPokes',      moduleTag: ['pokes','pokeGroups'],                  filePrefix: 'poke-groups',       label: '拍一拍',    successUnit: '条拍一拍' },
+        statuses:       { groups: window.customStatusGroups   || [], items: customStatuses,                groupKey: 'customStatusGroups',   itemKey: 'customStatuses',   moduleTag: ['statuses','statusGroups'],             filePrefix: 'status-groups',     label: '对方状态',  successUnit: '条状态' },
+        kaomojis:       { groups: window.kaomojiGroups        || [], items: kaomojiLibrary,                groupKey: 'kaomojiGroups',        itemKey: 'kaomojiLibrary',   moduleTag: ['kaomojis','kaomojiGroups'],            filePrefix: 'kaomoji-groups',    label: '颜文字',    successUnit: '条颜文字' },
+        moyuActivities: { groups: window.moyuActivityGroups   || [], items: window.moyuActivities || [],   groupKey: 'moyuActivityGroups',   itemKey: 'moyuActivities',  moduleTag: ['moyuActivities','moyuActivityGroups'], filePrefix: 'moyu-groups',       label: '摸鱼活动',  successUnit: '条摸鱼活动' },
+        moyuLocations:  { groups: window.moyuLocationGroups   || [], items: moyuLocations,                 groupKey: 'moyuLocationGroups',   itemKey: 'moyuLocations',   moduleTag: ['moyuLocations','moyuLocationGroups'],  filePrefix: 'moyu-loc-groups',   label: '工作地点',  successUnit: '个地点' },
     };
     const cfg = cfgMap[type] || cfgMap.replies;
 
@@ -2436,6 +2485,8 @@ function _showImportUI(data) {
         { id: '_ri_pokg',     icon: ICONS.folderBig, label: '拍一拍分组',    data: data.customPokeGroups,    key: 'customPokeGroups',   extra: true },
         { id: '_ri_statg',    icon: ICONS.folderBig, label: '对方状态分组',  data: data.customStatusGroups,  key: 'customStatusGroups', extra: true },
         { id: '_ri_kaomg',    icon: ICONS.folderBig, label: '颜文字分组',    data: data.kaomojiGroups,       key: 'kaomojiGroups',      extra: true },
+        { id: '_ri_moyug',    icon: ICONS.folderBig, label: '摸鱼活动分组',  data: data.moyuActivityGroups,  key: 'moyuActivityGroups', extra: true },
+        { id: '_ri_moyulg',   icon: ICONS.folderBig, label: '工作地点分组',  data: data.moyuLocationGroups,  key: 'moyuLocationGroups', extra: true },
     ].filter(m => m.data !== undefined && m.data !== null && (Array.isArray(m.data) ? m.data.length > 0 && m.data[0] !== undefined : true));
 
     _showIOSheet(`导入字卡`, `文件中包含 ${modules.length} 个模块`, modules, ICONS.import, (selected, mode) => {
