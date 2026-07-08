@@ -281,6 +281,11 @@ function deduplicateContentArray(arr, baseSystemArray = []) {
         };
 
         const throttledSaveData = () => {
+            // SAFE30：保存前刷新内容镜像，避免朋友圈/红包等模块读到旧空数组引用。
+            try { if (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) window._customReplies = customReplies; } catch(e) {}
+            try { if (typeof kaomojiLibrary !== 'undefined' && Array.isArray(kaomojiLibrary)) window._kaomojiLibrary = kaomojiLibrary; } catch(e) {}
+            try { if (typeof customEmojis !== 'undefined' && Array.isArray(customEmojis)) window._customEmojis = customEmojis; } catch(e) {}
+            try { if (typeof stickerLibrary !== 'undefined' && Array.isArray(stickerLibrary)) window._stickerLibrary = stickerLibrary; } catch(e) {}
             // 不在真正 saveData/merge 前提前镜像 chatSettings。
             // 提前镜像会先污染 localStorage-lastGood，正好打穿“读空时防默认覆盖”的保护。
             if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);

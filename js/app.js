@@ -112,7 +112,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                             }));
                             // 不再从紧急备份恢复 settings，避免旧名字/状态覆盖当前会话设置。
                             if (typeof updateUI === 'function') updateUI();
-                            if (typeof throttledSaveData === 'function') throttledSaveData();
+                            if (typeof window !== 'undefined') {
+            try { window._stickerLibrary = Array.isArray(stickerLibrary) ? stickerLibrary : []; } catch(e) {}
+        }
+        if (typeof throttledSaveData === 'function') throttledSaveData();
                             showNotification('已自动恢复本地临时备份内容', 'warning', 3500);
                         } catch (restoreErr) {
                             console.warn('[visibilitychange] 自动恢复失败，保留当前页面内容:', restoreErr);

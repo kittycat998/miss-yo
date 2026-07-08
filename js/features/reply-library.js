@@ -5,12 +5,30 @@ if (typeof customStatusGroups === 'undefined') window.customStatusGroups = [];
 if (typeof kaomojiGroups === 'undefined') window.kaomojiGroups = [];
 if (typeof customStickerGroups === 'undefined') window.customStickerGroups = [];
 
-// 同步表情包数据到全局，并通知其他模块
-function _syncStickerLibrary() {
-    window._stickerLibrary = stickerLibrary;
+// SAFE30：同步字卡/颜文字/Emoji/表情包到全局镜像，并通知其他模块。
+// 朋友圈、红包等模块会读 window._xxx；导入/覆盖/去重重新赋值后必须刷新镜像。
+function _syncReplyContentMirrors() {
+    try { window._customReplies = Array.isArray(customReplies) ? customReplies : []; } catch(e) {}
+    try { window._kaomojiLibrary = Array.isArray(kaomojiLibrary) ? kaomojiLibrary : []; } catch(e) {}
+    try { window._customEmojis = Array.isArray(customEmojis) ? customEmojis : []; } catch(e) {}
+    try { window._stickerLibrary = Array.isArray(stickerLibrary) ? stickerLibrary : []; } catch(e) {}
     try {
-        window.dispatchEvent(new CustomEvent('stickerLibraryUpdated', { detail: { count: stickerLibrary.length } }));
+        window.dispatchEvent(new CustomEvent('replyContentUpdated', {
+            detail: {
+                replies: (window._customReplies || []).length,
+                kaomojis: (window._kaomojiLibrary || []).length,
+                emojis: (window._customEmojis || []).length,
+                stickers: (window._stickerLibrary || []).length
+            }
+        }));
     } catch(e) {}
+    try {
+        window.dispatchEvent(new CustomEvent('stickerLibraryUpdated', { detail: { count: (window._stickerLibrary || []).length } }));
+    } catch(e) {}
+}
+
+function _syncStickerLibrary() {
+    _syncReplyContentMirrors();
 }
 
 // 根据当前 tab 返回对应的分组上下文 {groups, items, itemLabel}
@@ -1651,6 +1669,7 @@ function _runDedup() {
     customEmojis = [...new Set(customEmojis)];
     totalRemoved += (preEmoji - customEmojis.length);
     if (totalRemoved > 0) {
+        _syncReplyContentMirrors();
         throttledSaveData(); renderReplyLibrary();
         showNotification(`🧹 共清理了 ${totalRemoved} 条重复内容`, 'success');
     } else {
@@ -1888,6 +1907,7 @@ function _showGroupEditor(group, ctx) {
             group.name = name;
             group.color = selectedColor;
         }
+        _syncReplyContentMirrors();
         throttledSaveData();
         overlay.remove();
         renderReplyLibrary();
@@ -1948,6 +1968,7 @@ function _showSingleItemGroupPicker(itemText, ctx) {
             if (!groups[idx].items) groups[idx].items = [];
             groups[idx].items.push(itemText);
         }
+        _syncReplyContentMirrors();
         throttledSaveData();
         overlay.remove();
         renderReplyLibrary();
@@ -2640,6 +2661,7 @@ function _showImportUI(data) {
                     }
                 });
             }
+            _syncReplyContentMirrors();
             throttledSaveData();
             if (typeof renderReplyLibrary === 'function') renderReplyLibrary();
             if (typeof window.renderAnnStatusPool === 'function') window.renderAnnStatusPool();
@@ -3016,6 +3038,7 @@ function _showBatchAddDialog() {
                 });
             }
         }
+        _syncReplyContentMirrors();
         throttledSaveData();
         overlay.remove();
         renderReplyLibrary();

@@ -4005,6 +4005,12 @@ function showModal(modalElement, focusElement = null) {
                         if (doAnn      && importedData.anniversaries)   anniversaries  = importedData.anniversaries;
                         if (doThemes   && importedData.customThemes)    customThemes   = importedData.customThemes;
                         if (doThemes   && importedData.stickerLibrary)  stickerLibrary = importedData.stickerLibrary;
+                        try {
+                            window._customReplies = Array.isArray(customReplies) ? customReplies : [];
+                            window._kaomojiLibrary = Array.isArray(kaomojiLibrary) ? kaomojiLibrary : [];
+                            window._customEmojis = Array.isArray(customEmojis) ? customEmojis : [];
+                            window._stickerLibrary = Array.isArray(stickerLibrary) ? stickerLibrary : [];
+                        } catch(e) {}
 
                         saveData();
                         if (doMsgs && typeof renderMessages === 'function') renderMessages();

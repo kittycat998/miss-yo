@@ -429,10 +429,28 @@
     return String(value).replace(/[^a-zA-Z0-9_-]/g, function(ch) { return '\\' + ch; });
   }
 
+  // SAFE30/31：朋友圈文案池优先读当前运行时数组，而不是只读 window._xxx 镜像。
+  // 导入/覆盖/去重会重新给数组赋值，旧镜像可能停在空数组，导致自动朋友圈只剩默认文案。
+  // SAFE31：不能用“谁数量多用谁”，否则用户删除后旧镜像数量更大，会把已删内容又拿来发朋友圈。
+  function getLiveLibraryArray(liveName, mirrorName) {
+    let live = null;
+    try {
+      if (liveName === 'customReplies' && typeof customReplies !== 'undefined' && Array.isArray(customReplies)) live = customReplies;
+      else if (liveName === 'kaomojiLibrary' && typeof kaomojiLibrary !== 'undefined' && Array.isArray(kaomojiLibrary)) live = kaomojiLibrary;
+      else if (liveName === 'customEmojis' && typeof customEmojis !== 'undefined' && Array.isArray(customEmojis)) live = customEmojis;
+      else if (liveName === 'stickerLibrary' && typeof stickerLibrary !== 'undefined' && Array.isArray(stickerLibrary)) live = stickerLibrary;
+    } catch (e) {}
+    if (live) return live;
+    try {
+      if (typeof window !== 'undefined' && Array.isArray(window[mirrorName])) return window[mirrorName];
+    } catch (e) {}
+    return [];
+  }
+
   function getTextPool() {
-    const replies = (window._customReplies || []).map(v => String(v || '').trim()).filter(Boolean);
-    const kaomoji = (window._kaomojiLibrary || []).map(v => String(v || '').trim()).filter(Boolean);
-    const emojis = (window._customEmojis || []).map(v => String(v || '').trim()).filter(Boolean);
+    const replies = getLiveLibraryArray('customReplies', '_customReplies').map(v => String(v || '').trim()).filter(Boolean);
+    const kaomoji = getLiveLibraryArray('kaomojiLibrary', '_kaomojiLibrary').map(v => String(v || '').trim()).filter(Boolean);
+    const emojis = getLiveLibraryArray('customEmojis', '_customEmojis').map(v => String(v || '').trim()).filter(Boolean);
     return replies.concat(kaomoji).concat(emojis);
   }
 
@@ -447,9 +465,7 @@
   }
 
   function getStickerPool() {
-    if (window._stickerLibrary && Array.isArray(window._stickerLibrary)) return window._stickerLibrary.filter(Boolean);
-    if (typeof stickerLibrary !== 'undefined' && Array.isArray(stickerLibrary)) return stickerLibrary.filter(Boolean);
-    return [];
+    return getLiveLibraryArray('stickerLibrary', '_stickerLibrary').filter(Boolean);
   }
 
   function getMomentsMediaPool(kind) {
@@ -1828,20 +1844,11 @@
     // 刷新系统（伴侣）信息缓存
     await loadPartnerInfo();
 
-    // 获取字卡库
-    const customReplies = (window._customReplies || []).map(r => String(r || '').trim()).filter(Boolean);
-    // 获取颜文字库
-    const kaomojiLibrary = (window._kaomojiLibrary || []).map(k => String(k || '').trim()).filter(Boolean);
-    // 获取自定义表情
-    const customEmojis = (window._customEmojis || []).map(e => String(e || '').trim()).filter(Boolean);
-    // 获取表情包库
-    let _stickerLib = [];
-    if (typeof window !== 'undefined' && window._stickerLibrary && Array.isArray(window._stickerLibrary)) {
-      _stickerLib = window._stickerLibrary;
-    } else if (typeof stickerLibrary !== 'undefined' && Array.isArray(stickerLibrary)) {
-      _stickerLib = stickerLibrary;
-    }
-    const stickerLibraryFiltered = _stickerLib.filter(Boolean);
+    // 获取字卡库/颜文字/Emoji/表情包：读当前运行时数组，镜像只做兜底。
+    const customReplies = getLiveLibraryArray('customReplies', '_customReplies').map(r => String(r || '').trim()).filter(Boolean);
+    const kaomojiLibrary = getLiveLibraryArray('kaomojiLibrary', '_kaomojiLibrary').map(k => String(k || '').trim()).filter(Boolean);
+    const customEmojis = getLiveLibraryArray('customEmojis', '_customEmojis').map(e => String(e || '').trim()).filter(Boolean);
+    const stickerLibraryFiltered = getStickerPool();
 
     const hasTextContent = customReplies.length > 0 || kaomojiLibrary.length > 0 || customEmojis.length > 0;
     const hasStickers = stickerLibraryFiltered.length > 0;
@@ -2720,30 +2727,24 @@
 
     if (commentEmojiTab === 'emoji') {
       body.classList.remove('sticker-mode');
-      const customEmojis = (window._customEmojis || []).filter(Boolean);
+      const customEmojis = getLiveLibraryArray('customEmojis', '_customEmojis').filter(Boolean);
       if (customEmojis.length === 0) {
         body.innerHTML = '<div class="comment-emoji-empty">暂无自定义表情，请在聊天设置中添加</div>';
         return;
       }
-      items = customEmojis.map(e => `<div class="comment-emoji-item" onclick="MomentsApp.insertCommentEmoji('${e.replace(/'/g, "\\'")}')">${e}</div>`);
+      items = customEmojis.map(e => `<div class="comment-emoji-item" onclick="MomentsApp.insertCommentEmoji(${safeJsArg(e)})">${escapeHtml(e)}</div>`);
     } else if (commentEmojiTab === 'kaomoji') {
       body.classList.remove('sticker-mode');
-      const kaomojiLibrary = (window._kaomojiLibrary || []).filter(Boolean);
+      const kaomojiLibrary = getLiveLibraryArray('kaomojiLibrary', '_kaomojiLibrary').filter(Boolean);
       if (kaomojiLibrary.length === 0) {
         body.innerHTML = '<div class="comment-emoji-empty">暂无颜文字，请在字卡库中添加</div>';
         return;
       }
-      items = kaomojiLibrary.map(k => `<div class="comment-emoji-item" onclick="MomentsApp.insertCommentEmoji('${k.replace(/'/g, "\\'")}')">${k}</div>`);
+      items = kaomojiLibrary.map(k => `<div class="comment-emoji-item" onclick="MomentsApp.insertCommentEmoji(${safeJsArg(k)})">${escapeHtml(k)}</div>`);
     } else if (commentEmojiTab === 'sticker') {
       body.classList.add('sticker-mode');
-      // 从 window._stickerLibrary 读取，如果不存在则尝试全局 stickerLibrary
-      let _stickerLib = [];
-      if (typeof window !== 'undefined' && window._stickerLibrary && Array.isArray(window._stickerLibrary)) {
-        _stickerLib = window._stickerLibrary;
-      } else if (typeof stickerLibrary !== 'undefined' && Array.isArray(stickerLibrary)) {
-        _stickerLib = stickerLibrary;
-      }
-      const stickerLibraryFiltered = _stickerLib.filter(Boolean);
+      // SAFE30：读当前运行时表情库，window 镜像只做兜底。
+      const stickerLibraryFiltered = getStickerPool();
       console.log('[Moments] stickerLibrary count:', stickerLibraryFiltered.length, 'raw:', window._stickerLibrary);
       if (stickerLibraryFiltered.length === 0) {
         body.innerHTML = '<div class="comment-emoji-empty">暂无表情包，请在表情包管理中添加</div>';
@@ -2771,13 +2772,7 @@
   }
 
   function selectCommentSticker(index) {
-    let _stickerLib = [];
-    if (typeof window !== 'undefined' && window._stickerLibrary && Array.isArray(window._stickerLibrary)) {
-      _stickerLib = window._stickerLibrary;
-    } else if (typeof stickerLibrary !== 'undefined' && Array.isArray(stickerLibrary)) {
-      _stickerLib = stickerLibrary;
-    }
-    const stickerLibraryFiltered = _stickerLib.filter(Boolean);
+    const stickerLibraryFiltered = getStickerPool();
     if (index >= 0 && index < stickerLibraryFiltered.length) {
       pendingCommentSticker = stickerLibraryFiltered[index];
       // 显示预览
@@ -3966,13 +3961,7 @@
     if (!container) return;
     
     const body = container.querySelector('#publishStickerBody');
-    let _stickerLib = [];
-    if (typeof window !== 'undefined' && window._stickerLibrary && Array.isArray(window._stickerLibrary)) {
-      _stickerLib = window._stickerLibrary;
-    } else if (typeof stickerLibrary !== 'undefined' && Array.isArray(stickerLibrary)) {
-      _stickerLib = stickerLibrary;
-    }
-    const stickerLibraryFiltered = _stickerLib.filter(Boolean);
+    const stickerLibraryFiltered = getStickerPool();
     
     if (stickerLibraryFiltered.length === 0) {
       body.innerHTML = '<div class="publish-sticker-empty">暂无表情包，请在表情包管理中添加</div>';
@@ -3987,13 +3976,7 @@
   }
 
   function selectPublishSticker(index) {
-    let _stickerLib = [];
-    if (typeof window !== 'undefined' && window._stickerLibrary && Array.isArray(window._stickerLibrary)) {
-      _stickerLib = window._stickerLibrary;
-    } else if (typeof stickerLibrary !== 'undefined' && Array.isArray(stickerLibrary)) {
-      _stickerLib = stickerLibrary;
-    }
-    const stickerLibraryFiltered = _stickerLib.filter(Boolean);
+    const stickerLibraryFiltered = getStickerPool();
     if (index < 0 || index >= stickerLibraryFiltered.length) return;
     
     publishSticker = stickerLibraryFiltered[index];
