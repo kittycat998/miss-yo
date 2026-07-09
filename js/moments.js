@@ -2012,7 +2012,35 @@
     return pickRandom(authors) || getDefaultPartnerFriend()[0];
   }
 
+  // SAFE32：首条自动朋友圈必须等主数据 loadData 完成。
+  // 否则页面刚打开时定时器先跑，字卡/颜文字/Emoji/表情池还没从存储灌回运行时数组，
+  // 第一条会误判为空池并掉到“分享一点小心情”兜底；后续因数据已加载才恢复正常。
+  function isMomentContentRuntimeReady() {
+    try {
+      if (window.__appDataReady === true) return true;
+      // 兼容极早期/独立页面：没有 __appDataReady 标记时，只要任一运行池镜像已出现，就认为可启动。
+      if (typeof window.__appDataReady === 'undefined') {
+        return Array.isArray(window._customReplies)
+          || Array.isArray(window._kaomojiLibrary)
+          || Array.isArray(window._customEmojis)
+          || Array.isArray(window._stickerLibrary);
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  function deferPartnerMomentSchedulerUntilReady(reason) {
+    if (partnerMomentTimer) clearTimeout(partnerMomentTimer);
+    partnerMomentTimer = setTimeout(function() {
+      startPartnerMomentScheduler(reason || 'wait-ready');
+    }, 500);
+  }
+
   async function publishPartnerMoment(author) {
+    if (!isMomentContentRuntimeReady()) {
+      deferPartnerMomentSchedulerUntilReady('publish-before-ready');
+      return;
+    }
     await loadPartnerInfo();
     if (!author) author = await pickMomentPostAuthor();
     await loadMomentsFromAllStorage();
@@ -2082,8 +2110,12 @@
     partnerMomentTimer = setTimeout(() => publishPartnerMoment(), delay);
   }
 
-  function startPartnerMomentScheduler() {
+  function startPartnerMomentScheduler(reason) {
     if (partnerMomentTimer) clearTimeout(partnerMomentTimer);
+    if (!isMomentContentRuntimeReady()) {
+      deferPartnerMomentSchedulerUntilReady(reason || 'scheduler-before-ready');
+      return;
+    }
     const next = Number(momentsGet('moments_partner_next_post_at') || 0);
     if (next && next > Date.now()) {
       partnerMomentTimer = setTimeout(() => publishPartnerMoment(), next - Date.now());
@@ -2745,7 +2777,6 @@
       body.classList.add('sticker-mode');
       // SAFE30：读当前运行时表情库，window 镜像只做兜底。
       const stickerLibraryFiltered = getStickerPool();
-      console.log('[Moments] stickerLibrary count:', stickerLibraryFiltered.length, 'raw:', window._stickerLibrary);
       if (stickerLibraryFiltered.length === 0) {
         body.innerHTML = '<div class="comment-emoji-empty">暂无表情包，请在表情包管理中添加</div>';
         return;
@@ -5472,9 +5503,9 @@
     _visitorTouchEnd
   };
 
-  // 伴侣动态定时器不依赖手动测试按钮；页面加载后自动按设置间隔运行。
+  // 伴侣动态定时器不依赖手动测试按钮；但必须等主数据加载完成后再启动，避免首条误发兜底文案。
   setTimeout(() => {
-    try { startPartnerMomentScheduler(); } catch (e) {}
+    try { startPartnerMomentScheduler('boot'); } catch (e) {}
   }, 1200);
 
 })();
